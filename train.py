@@ -57,7 +57,7 @@ block_size = 128
 # model
 n_layer = 2
 n_head = 2
-n_embd = 128
+n_embd = 196
 dropout = 0.1  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
 # adamw optimizer
@@ -245,13 +245,13 @@ def estimate_loss():
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        print("estimate_loss ", split)
+        # print("estimate_loss ", split)
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
                 logits, loss = model.forward(X, Y)
-            print("loss.item()", loss.item())
+            # print("loss.item()", loss.item())
             losses[k] = loss.item()
         out[split] = losses.mean()
     model.train()
@@ -322,7 +322,7 @@ while True:
     # forward backward update, with optional gradient accumulation to simulate larger batch size
     # and using the GradScaler if data type is float16
     for micro_step in range(gradient_accumulation_steps):
-        print(1)
+        # print(1)
         if ddp:
             # in DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but
@@ -336,7 +336,7 @@ while True:
         X, Y = get_batch('train')
         # backward pass, with gradient scaling if training in fp16
         scaler.scale(loss).backward()
-        print("2")
+        # print("2")
     # clip the gradient
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)

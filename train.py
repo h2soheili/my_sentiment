@@ -16,10 +16,15 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 (If your cluster does not have Infiniband interconnect prepend NCCL_IB_DISABLE=1)
 """
 
+import sys
+
+is_colab = 'google.colab' in sys.modules
+if is_colab and "/content/my_sentiment" not in sys.path:
+    sys.path += ['/content/my_sentiment', 'my_sentiment']
+
 import math
 import os
 import pickle
-import sys
 import time
 from contextlib import nullcontext
 import random
@@ -40,8 +45,7 @@ print("meta_vocab_size", meta_vocab_size)
 # -----------------------------------------------------------------------------
 # default config values
 # I/O
-is_colab = 'google.colab' in sys.modules
-base_path = '/content/gdrive/MyDrive/mycolab' if is_colab else '.'
+base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '.'
 
 out_dir = os.path.join(base_path, "out")
 eval_interval = 50
@@ -50,7 +54,7 @@ eval_iters = 20
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = True  # if True, always save a checkpoint after each eval
 init_from = 'scratch'  # 'scratch' or 'resume'
-
+data_dir = os.path.join(base_path)
 ckpt_path = os.path.join(out_dir, 'ckpt.pt')
 if os.path.exists(ckpt_path):
     init_from = 'resume'
@@ -135,10 +139,8 @@ device_type = 'cuda' if 'cuda' in device else 'cpu'  # for later use in torch.au
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-# poor man's data loader
-print(os.getcwd())
-# data_dir = os.path.join('data', dataset)
-data_dir = os.path.join(base_path, os.getcwd())
+
+
 
 
 def get_data_loader(split):

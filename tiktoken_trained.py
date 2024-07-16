@@ -4,6 +4,7 @@ ENDOFTEXT = "<|endoftext|>"
 VOCAB_SIZE = 3500
 ENDOFTEXT_TOKEN = VOCAB_SIZE
 
+
 def fn():
     import polars as pl
     df = pl.read_csv('./stocks.csv')
@@ -139,8 +140,6 @@ def fn2():
     df = pl.read_csv('./bv_news2.csv')
     special_tokens = ["positive", "neutral", "negative"]
 
-
-
     text = " ".join(df["text"].to_list())
     text += " " + " ".join(new_items)
 
@@ -184,7 +183,11 @@ def fn2():
 def fn3():
     print("... loading from tiktoken_trained.iso")
     import pickle
-    f = open('./tiktoken_trained.iso', 'rb')
+    import sys
+    is_colab = 'google.colab' in sys.modules
+    p = "./my_sentiment" if is_colab else "."
+    p = f"{p}/tiktoken_trained.iso"
+    f = open(p, 'rb')
     data = pickle.load(f)
     # print(data)
     f.close()

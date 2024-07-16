@@ -22,6 +22,7 @@ import pickle
 import sys
 import time
 from contextlib import nullcontext
+import random
 
 import numpy as np
 import torch
@@ -30,17 +31,19 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import TensorDataset, DataLoader
 
 from model import GPTConfig, GPT
-from tiktoken_extended import extended_encoding
+from tiktoken_extended import extended_encoding, ENDOFTEXT_TOKEN
 
 print(extended_encoding.name, "extended_encoding.max_token_value", extended_encoding.max_token_value)
-
 meta_vocab_size = extended_encoding.max_token_value + 1
 print("meta_vocab_size", meta_vocab_size)
 
 # -----------------------------------------------------------------------------
 # default config values
 # I/O
-out_dir = 'out'
+is_colab = 'google.colab' in sys.modules
+base_path = '/content/gdrive/MyDrive/mycolab' if is_colab else '.'
+
+out_dir = os.path.join(base_path, "out")
 eval_interval = 50
 log_interval = 1
 eval_iters = 20
@@ -91,6 +94,13 @@ config_keys = [k for k, v in globals().items() if not k.startswith('_') and isin
 config = {k: globals()[k] for k in config_keys}  # will be useful for logging
 # -----------------------------------------------------------------------------
 
+seed = 1024
+random.seed(seed)
+os.environ["PYTHONHASHSEED"] = str(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)
+
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get('RANK', -1)) != -1  # is this a ddp run?
 ddp_local_rank = None
@@ -128,7 +138,7 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 # poor man's data loader
 print(os.getcwd())
 # data_dir = os.path.join('data', dataset)
-data_dir = os.path.join(os.getcwd())
+data_dir = os.path.join(base_path, os.getcwd())
 
 
 def get_data_loader(split):
@@ -164,7 +174,8 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=meta_vocab_size, dropout=dropout)  # start with model_args from command line
+                  bias=bias, vocab_size=meta_vocab_size, dropout=dropout,
+                  padding_idx=ENDOFTEXT_TOKEN)  # start with model_args from command line
 model = None
 checkpoint = None
 print("init_from ", init_from)
@@ -226,6 +237,24 @@ if compile and sys.platform != 'win32':
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 
+train_data_loader_iterator = iter(train_data_loader)
+val_data_loader_iterator = iter(val_data_loader)
+
+
+def get_random_data(split):
+    global train_data_loader_iterator
+    global val_data_loader_iterator
+    try:
+        iterator = train_data_loader_iterator if split == 'train' else val_data_loader_iterator
+        return next(iterator)
+    except Exception as e:
+        print("get_data error ", split, e)
+        if split == 'train':
+            train_data_loader_iterator = iter(train_data_loader)
+        else:
+            val_data_loader_iterator = iter(val_data_loader)
+        return get_random_data(split)
+
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
@@ -236,18 +265,17 @@ def estimate_loss():
     logits = None
 
     for split in ['train', 'val']:
-        data_loader = train_data_loader if split == 'train' else val_data_loader
-        losses = torch.zeros(len(data_loader))
-
-        with ctx:
-            for i, (x, y) in enumerate(data_loader):
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            x, y = get_random_data(split)
+            with ctx:
                 logits, loss = model.forward(x, y)
-                losses[i] = loss.item()
+                losses[k] = loss.item()
 
         out[split] = losses.mean()
-        if split == 'val':
-            print(logits.argmax(-1))
-            print(y)
+    # if split == 'val':
+    #     print(logits.argmax(-1))
+    #     print(y)
     model.train()
     return out
 

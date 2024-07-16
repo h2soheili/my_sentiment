@@ -233,7 +233,8 @@ unoptimized_model = model
 # compile the model
 if compile and sys.platform != 'win32':
     print("compiling the model... (takes a ~minute)")
-    model = torch.compile(model, backend='aot_eager' if device == 'mps' else 'inductor')  # requires PyTorch 2.0
+    model = torch.compile(model, backend='aot_eager' if device == 'mps' else 'aot_eager')  # requires PyTorch 2.0
+    # model = torch.compile(model, backend='aot_eager' if device == 'mps' else 'inductor')  # requires PyTorch 2.0
     print('... compiled')
 # wrap model into DDP container
 if ddp:

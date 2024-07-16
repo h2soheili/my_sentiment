@@ -213,6 +213,8 @@ elif init_from == 'resume':
     model.load_state_dict(state_dict)
     iter_num = checkpoint['iter_num']
     best_val_loss = checkpoint['best_val_loss']
+    print("iter_num ", iter_num)
+    print("best_val_loss ", best_val_loss)
 
 print(model)
 

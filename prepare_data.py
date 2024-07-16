@@ -3,20 +3,24 @@ import os
 import numpy as np
 import polars as pl
 
-from extended_tiktoken import extended_encoding
+from tiktoken_extended import extended_encoding, ENDOFTEXT_TOKEN
 
-df = pl.read_csv('../../../bv_news2.csv')
+df = pl.read_csv('./bv_news2.csv')
 
 data_x = df["text"].to_list()
 data_y = df["sentiment"].to_list()
+
 n = len(data_x)
 
 block_size = 128
+
+
 def add_padding(arr, max_token_len=block_size):
-    return [(i[:max_token_len] + ([0] * (max_token_len - len(i)))) for i in arr]
+    # use ENDOFTEXT token for padding
+    return [(i[:max_token_len] + ([ENDOFTEXT_TOKEN] * (max_token_len - len(i)))) for i in arr]
 
 
-till = int(n * 0.6)
+till = int(n * 0.7)
 
 print("rows", len(df), "train ", till)
 

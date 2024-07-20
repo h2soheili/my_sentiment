@@ -177,7 +177,7 @@ if os.path.exists(meta_path):
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
                   bias=bias, vocab_size=meta_vocab_size, dropout=dropout,
-                  padding_idx=ENDOFTEXT_TOKEN)  # start with model_args from command line
+                  padding_idx=ENDOFTEXT_TOKEN, device=device)  # start with model_args from command line
 model = None
 checkpoint = None
 print("init_from ", init_from)

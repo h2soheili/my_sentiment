@@ -1,12 +1,3 @@
-"""
-Full definition of a GPT Language Model, all of it in this single file.
-References:
-1) the official GPT-2 TensorFlow implementation released by OpenAI:
-https://github.com/openai/gpt-2/blob/master/src/model.py
-2) huggingface/transformers PyTorch implementation:
-https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
-"""
-
 import inspect
 import math
 from dataclasses import dataclass
@@ -15,23 +6,85 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from rotary_embedding_torch import RotaryEmbedding
+
+
+@dataclass
+class GPTConfig:
+    block_size: int = 1024
+    vocab_size: int = 50304  # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+    dropout: float = 0.0
+    bias: bool = True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    padding_idx: int = 3500
+    device: str = 'cpu'
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, d, p=-1., eps=1e-8, bias=False):
+        """
+            Root Mean Square Layer Normalization
+        :param d: model size
+        :param p: partial RMSNorm, valid value [0, 1], default -1.0 (disabled)
+        :param eps:  epsilon value, default 1e-8
+        :param bias: whether use bias term for RMSNorm, disabled by
+            default because RMSNorm doesn't enforce re-centering invariance.
+        """
+        super(RMSNorm, self).__init__()
+
+        self.eps = eps
+        self.d = d
+        self.p = p
+        self.bias = bias
+
+        self.scale = nn.Parameter(torch.ones(d))
+        self.register_parameter("scale", self.scale)
+
+        if self.bias:
+            self.offset = nn.Parameter(torch.zeros(d))
+            self.register_parameter("offset", self.offset)
+
+    def forward(self, x):
+        if self.p < 0. or self.p > 1.:
+            norm_x = x.norm(2, dim=-1, keepdim=True)
+            d_x = self.d
+        else:
+            partial_size = int(self.d * self.p)
+            partial_x, _ = torch.split(x, [partial_size, self.d - partial_size], dim=-1)
+
+            norm_x = partial_x.norm(2, dim=-1, keepdim=True)
+            d_x = partial_size
+
+        rms_x = norm_x * d_x ** (-1. / 2)
+        x_normed = x / (rms_x + self.eps)
+
+        if self.bias:
+            return self.scale * x_normed + self.offset
+
+        return self.scale * x_normed
+
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
     def __init__(self, ndim, bias):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(ndim))
-        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+        # self.weight = nn.Parameter(torch.ones(ndim))
+        # self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+        self.norm = RMSNorm(d=ndim, bias=bias)
 
-    def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+    def forward(self, x):
+        # return F.layer_norm(x, self.weight.shape, self.weight, self.bias, 1e-5)
+        return self.norm(x)
 
 
 class CausalSelfAttention(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig, rotary_emb: RotaryEmbedding):
         super().__init__()
+        self.rotary_emb = rotary_emb
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
@@ -60,6 +113,9 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
 
+        q = self.rotary_emb.rotate_queries_or_keys(q)
+        k = self.rotary_emb.rotate_queries_or_keys(k)
+
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
@@ -82,16 +138,16 @@ class CausalSelfAttention(nn.Module):
 
 class MLP(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu = nn.GELU()
+        self.act = nn.SiLU()
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = self.gelu(x)
+        x = self.act(x)
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
@@ -99,10 +155,10 @@ class MLP(nn.Module):
 
 class Block(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig, rotary_emb: RotaryEmbedding):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = CausalSelfAttention(config)
+        self.attn = CausalSelfAttention(config, rotary_emb)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
@@ -112,31 +168,22 @@ class Block(nn.Module):
         return x
 
 
-@dataclass
-class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50304  # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
-    dropout: float = 0.0
-    bias: bool = True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    padding_idx: int = 3500
-
-
 class GPT(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
         self.config = config
         print("GPT config", config)
+
+        self.rotary_emb = RotaryEmbedding(dim=config.block_size, device=config.device)
+
         self.transformer = nn.ModuleDict(dict(
             wte=nn.Embedding(config.vocab_size, config.n_embd, config.padding_idx),
             wpe=nn.Embedding(config.block_size, config.n_embd),
             drop=nn.Dropout(config.dropout),
-            h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            h=nn.ModuleList([Block(config, self.rotary_emb) for _ in range(config.n_layer)]),
             ln_f=LayerNorm(config.n_embd, bias=config.bias),
         ))
         self.lm_head = nn.Linear(config.n_embd * config.block_size, config.vocab_size, bias=False)
@@ -181,12 +228,14 @@ class GPT(nn.Module):
         device = idx.device
         b, t = idx.size()
         # assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device)  # shape (t)
+        # pos = torch.arange(0, t, dtype=torch.long, device=device)  # shape (t)
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        # tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
+        # pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (t, n_embd)
+        # x = self.transformer.drop(tok_emb + pos_emb)
+        tok_emb = self.transformer.wte(idx)
+        x = self.transformer.drop(tok_emb)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)

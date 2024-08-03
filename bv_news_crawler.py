@@ -2,7 +2,6 @@ import json
 import random
 import re
 
-import hazm
 import jdatetime
 import jsonlines
 import polars as pl
@@ -62,6 +61,21 @@ emoji_pattern = re.compile("["
                            u"\ufe0f"  # dingbats
                            u"\u3030"
                            "]+", flags=re.UNICODE)
+
+persian_months = [
+    "فروردین",
+    "اردیبهشت",
+    "خرداد",
+    "تیر",
+    "مرداد",
+    "شهریور",
+    "مهر",
+    "آبان",
+    "آذر",
+    "دی",
+    "بهمن",
+    "اسفند",
+]
 
 # dont add ? to this remove_items list
 remove_items = [
@@ -124,8 +138,8 @@ remove_items = [
     "sulfur",
     "shahrebours",
     "karoacademy",
-    "تجارت‌نیوز",
-    "تجارت ‌نیوز",
+    "تجارت نیوز",
+    "تجارت  نیوز",
     "000 gqu",
     "gqu 000",
     "padash",
@@ -139,9 +153,10 @@ remove_items = [
     "#اختصاصی",
     " ",
     "000gss",
-    "‌",
+    " ",
     "solutien",
     "⃣",
+    "  ",
     "   ",
     "​",
     "000grs",
@@ -164,6 +179,7 @@ remove_items = [
     "validhelalat",
     "⏫",
     "↖",
+    "ء",
     "https",
     "http",
     "کارگزاری بانک صنعت و معدن",
@@ -173,7 +189,6 @@ remove_items = [
     "کارگزاری صنعت و معدن",
     "خبرگزاری مهر",
     "برای مشاهده لطفا کلیک کنید",
-    "/",
     "بیشتر بخوانید",
     "000bpb",
     "000boq",
@@ -184,21 +199,27 @@ remove_items = [
     "facebook",
     "smartbourse",
     "kaladade",
+    ";",
+    "؛",
+    "‎",
+    "⁩",
+    "⁧",
+    "‌",
+    "سبدگردان ویستا",
+
 ]
 
 replace_items = {
     "  ": " ",
     "...": " ",
     "..": " ",
-    "ریالی": " ریال",
-    "میلیاردریال": " میلیارد ریال",
-    "میلیارد": " میلیارد",
-    "میلیونریال": " میلیون ریال",
-    "میلیون": " میلیون",
-    "هزارریال": " هزار ریال",
-    "هزار": " هزار",
-    "ماهه": " ماهه",
-    "ماه": " ماه",
+    "میلیاردریال": " میلیارد ریال ",
+    "میلیاردتومان": " میلیارد تومان ",
+    "میلیونریال": " میلیون ریال ",
+    "میلیونتومان": " میلیون تومان ",
+    "هزارریال": " هزار ریال ",
+    "ریالی": "ریال",
+    "تومانی": "تومان",
     'بتا سهم': '',
     'بازار نفت گاز پتروشیمی': '',
     'پارسیس': '',
@@ -209,19 +230,17 @@ replace_items = {
     'آموزش مفید': '',
     'تحلیل هفتگی بازار سرمایه': '',
     'شرکت کارگزاری مفید': '',
-    'ژئوپلیتیک': '',
+    'ژیوپلیتیک': '',
     'بورس ویو': '',
     'کامودیتی': '',
     'methanol': 'متانول',
     'الفینی': 'الفین',
-    'معاملات‌های': 'معاملات‌',
+    'معاملات های': 'معاملات ',
     "_": " ",
     "(": " ",
     ")": " ",
     "oilmarket": "",
     " , ": ",",
-    "درصدی": " درصدی ",
-    "درصد": " درصد ",
     "⁉": "?",
     "میدهد": "می دهد",
     "میشدند": "می شدند",
@@ -232,21 +251,36 @@ replace_items = {
     "٠": ".",
     "میکنید": "می کنید",
     "میشوند": "می شوند",
-    "درصد ی": "درصدی",
     "بازارهای": "بازار های",
     "سود مجمع داشته است": "سود محقق کرده است",
     "سود مجمع محقق کرده است": "سود محقق کرده است",
-    "هیأت": "هیات",
-    "رؤسای": "رییسان",
+    "ؤ": "و",
     "اً": "ا",
+    "أ": "ا",
     "صورتهای مالی": "صورت های مالی",
     "ال ان جی": "lng",
     "lng lng": "lng",
-    "$": " دلار ",
+    "درصدی": "%",
+    "درصد ی": "%",
+    "درصد": "%",
+    "دلاری": "$",
+    "دلار": "$",
+
+    "%": "%",
+    "٪": "%",
+    "میشود": "می شود",
+    "می شود": "می شود",
+    "روزهای": "روز های",
+    "نمادها": "نماد ها",
+    "/": ".",
+    ",": "",
+    "میایون": "میلیون",
 }
 
-remove_pattern = "|".join(remove_items)
-remove_pattern = f"{remove_pattern}"
+for m in persian_months:
+    replace_items[f"{m}ماه"] = m
+    replace_items[f"{m}ماه "] = m
+
 # print(remove_pattern)
 
 skip_these_channels = ["planner",
@@ -264,10 +298,10 @@ skip_these_topics = ["کارگاه آموزشی",
                      "بازی جدید تلگرام",
                      "بازی تلگرامی",
                      "بازی تلگرام",
-                     "صندوق‌های رای",
-                     "صندوق‌ رای",
+                     "صندوق های رای",
+                     "صندوق رای",
                      "رای گیری",
-                     "برگزار می‌گردد",
+                     "برگزار می گردد",
                      "برگزار میگردد",
                      "بیشترین ورود نقدینگی حقیقی و حقوقی در کدام صنایع بوده است",
                      "آماده انجام معامله می باشند",
@@ -290,8 +324,10 @@ replace_months = {
     "ماه می": "may",
     # "می": "may",
     "ژوئن": "juan",
+    "ژوین": "juan",
     "جولای": "july",
     "ژوئیه": "july",
+    "ژوییه": "july",
     "آگوست": "august",
     "سپتامبر": "september",
     "اکتبر": "october",
@@ -328,10 +364,9 @@ map_to_standard_char = {'ك': 'ک',
                         '٧': '7',
                         '٨': '8',
                         '٩': '9',
-                        "،": ","
+                        "،": ",",
+                        "ئ": "ی",
                         }
-
-text_normalizer = hazm.Normalizer(persian_numbers=False, )
 
 
 def clean_text2(_text):
@@ -347,7 +382,47 @@ def clean_text2(_text):
     return text
 
 
-def clean_text1(_text, retry=0):
+def change_minus_position(_text):
+    text = _text
+    text = text.strip()
+
+    if re.match(r"-\d+", text):
+        return text.replace("-", "") + "-"
+    return text
+
+
+items_to_add_padding = [
+                           "تلفیقی",
+                           "تن",
+                           "کیلو",
+                           "کیلوگرم",
+                           "گرم",
+                           "تومانی",
+                           "تومان",
+                           "ریالی",
+                           "ریال",
+                           "تریلیون",
+                           "میلیارد",
+                           "میلیون",
+                           "هزار",
+                           "ماهه",
+                           "ماه",
+                           "فروش",
+                           "خرید",
+                       ] + persian_months
+
+
+def add_padding(_text):
+    text = _text
+    text = text.strip()
+
+    for i in items_to_add_padding:
+        if re.match(f"\d+{i}", text):
+            text = text.replace(i, f" {i}")
+    return text
+
+
+def clean_text1(_text):
     text = _text
     # link
     text = re.sub(r'^https?:\/\/.*[\r\n]*', '', text, flags=re.MULTILINE)
@@ -359,27 +434,30 @@ def clean_text1(_text, retry=0):
     text = re.sub(r'\d{1,2}:\d{2}', '', text)
     # emoji
     text = emoji_pattern.sub(r' ', text)
+    text = text.replace("  ", " ")
     text = clean_text2(text)
-    # print(text)
-    text = re.sub(remove_pattern, r' ', text)
+    text = text.replace("  ", " ")
+    text = " ".join(map(change_minus_position, text.split(" ")))
+    text = " ".join(map(add_padding, text.split(" ")))
+    for i in remove_items:
+        text = text.replace(i, " ")
+    text = text.replace("  ", " ")
     for k, v in replace_items.items():
         text = text.replace(k, v)
-    # text = text_normalizer.normalize(text)
-    text = re.sub(remove_pattern, r' ', text)
-    for k, v in replace_items.items():
-        text = text.replace(k, v)
-    text = text.strip()
+    text = text.replace("  ", " ")
     for topic in skip_these_topics:
         if topic in _text:
             return None
-
     for k, v in replace_months.items():
-        text = text.replace(f" {k} ", f" {v} ")
+        text = text.replace(f"{k}", f" {v} ")
     return text
 
 
 def clean_text0(_text):
-    text = _text.replace('|', "\n ")
+    if _text is None:
+        return None
+    text = _text.strip()
+    text = text.replace('|', "\n ")
     text = text.lower()
     arr = text.split('\n')
     arr = map(clean_text1, arr)
@@ -414,6 +492,7 @@ def bv_news_cleaner_fn(obj):
     r = random.random()
     sentiment = "positive" if r > 0.66 else "negative" if r < 0.33 else "neutral"
     result["sentiment"] = sentiment
+    result["target"] = random.randint(0, 4)
     return result
 
 
@@ -421,7 +500,7 @@ def process_news():
     """"
     {"id": 406956,
     "date": "1403/04/19-13:55:59",
-     "text": "دبیر انجمن خودروسازان:\n▪️شرکت‌های ایران خودرو و سایپا در انتظار ابلاغ قیمت‌های جدید از سوی وزارت صمت هستند.",
+     "text": "دبیر انجمن خودروسازان:\n▪️شرکت های ایران خودرو و سایپا در انتظار ابلاغ قیمت های جدید از سوی وزارت صمت هستند.",
       "hyperText": null,
        "mediaPath": null,
        "IsDeleted": false,
@@ -480,12 +559,63 @@ def extract_vocab():
         f.write(d2)
 
 
+def process_news3():
+    df = pl.read_csv('./bv_news_.csv')
+
+    texts = df['text'].to_list()
+    print(len(texts))
+    import multiprocessing as mp
+    from tiktoken_trained import new_items
+    with mp.Pool(8) as pool:
+        results = pool.map(clean_text0, texts)
+        print(len(results))
+        df = df.with_columns(pl.Series('text2', results))
+        df.write_csv('./bv_news_2.csv')
+        with open('./sometext.txt', 'r', encoding='utf8') as f:
+            t = list(f.readlines())
+            t = pool.map(clean_text0, t)
+            with open('./text.txt', 'w+', encoding='utf8') as ff:
+                txt = "\n".join(map(lambda x: x or "", results))
+                txt += "\n".join(map(lambda x: x or "", new_items))
+                txt += "\n".join(map(lambda x: x or "", t))
+                ff.write(txt)
+
+
+def process4():
+    with open('./sometext.txt', 'r', encoding='utf8') as f:
+        texts = list(f.readlines())
+        import multiprocessing as mp
+        with mp.Pool(8) as pool:
+            results = pool.map(clean_text0, texts)
+            print(len(results))
+            items = dict()
+            for i in results:
+                k = (i or "").strip()
+                if re.match(r"\d+", k):
+                    continue
+                items[k] = len(k)
+            items = {k: v for k, v in sorted(items.items(), key=lambda item: item[1])}
+            results = items.keys()
+            print(len(results))
+            text = " \n".join(results)
+
+            with open('./sometext.txt', 'w', encoding='utf8') as ff:
+                ff.write(text)
+
+
 if __name__ == '__main__':
     # fetch_all_data()
 
     # process_news()
-    process_news2()
+    # process_news2()
+    process_news3()
+
+    # process4()
+
     # s = "شرکت تام ایران خودرو سهامی عام در گزارش 12ماهه به سود 1314 میلیارد ریال رسیده است"
     # print(s)
     # print(clean_text2(s))
     # extract_vocab()
+
+    t = ""
+    print(clean_text0(t))

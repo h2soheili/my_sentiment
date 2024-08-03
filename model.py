@@ -1,321 +1,324 @@
-import inspect
 import math
 from dataclasses import dataclass
+from typing import Optional, Tuple, Any
 
 import torch
-import torch.nn as nn
-from torch.nn import functional as F
-
-from rotary_embedding_torch import RotaryEmbedding
+import torch.nn.functional as F
+from torch import nn
 
 
 @dataclass
-class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50304  # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
+class ModelArgs:
+    dim: int = 4096
+    n_layers: int = 32
+    n_heads: int = 32
+    n_kv_heads: Optional[int] = None
+    vocab_size: int = -1
+    multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
+    ffn_dim_multiplier: Optional[float] = None
+    norm_eps: float = 1e-5
+    rope_theta: float = 500000
+
+    max_batch_size: int = 32
+    max_seq_len: int = 2048
+    pad_id: int = -1
     dropout: float = 0.0
-    bias: bool = True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    padding_idx: int = 3500
-    device: str = 'cpu'
+    num_classes: int = 5
+    bias: bool = False
 
 
-class RMSNorm(nn.Module):
-    def __init__(self, d, p=-1., eps=1e-8, bias=False):
-        """
-            Root Mean Square Layer Normalization
-        :param d: model size
-        :param p: partial RMSNorm, valid value [0, 1], default -1.0 (disabled)
-        :param eps:  epsilon value, default 1e-8
-        :param bias: whether use bias term for RMSNorm, disabled by
-            default because RMSNorm doesn't enforce re-centering invariance.
-        """
-        super(RMSNorm, self).__init__()
-
+class RMSNorm(torch.nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6, device: Any = None):
+        super().__init__()
         self.eps = eps
-        self.d = d
-        self.p = p
-        self.bias = bias
+        self.weight = nn.Parameter(torch.ones(dim, device=device))
 
-        self.scale = nn.Parameter(torch.ones(d))
-        self.register_parameter("scale", self.scale)
-
-        if self.bias:
-            self.offset = nn.Parameter(torch.zeros(d))
-            self.register_parameter("offset", self.offset)
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
     def forward(self, x):
-        if self.p < 0. or self.p > 1.:
-            norm_x = x.norm(2, dim=-1, keepdim=True)
-            d_x = self.d
-        else:
-            partial_size = int(self.d * self.p)
-            partial_x, _ = torch.split(x, [partial_size, self.d - partial_size], dim=-1)
-
-            norm_x = partial_x.norm(2, dim=-1, keepdim=True)
-            d_x = partial_size
-
-        rms_x = norm_x * d_x ** (-1. / 2)
-        x_normed = x / (rms_x + self.eps)
-
-        if self.bias:
-            return self.scale * x_normed + self.offset
-
-        return self.scale * x_normed
+        output = self._norm(x.float()).type_as(x)
+        return output * self.weight
 
 
-class LayerNorm(nn.Module):
-    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
-
-    def __init__(self, ndim, bias):
-        super().__init__()
-        # self.weight = nn.Parameter(torch.ones(ndim))
-        # self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
-        self.norm = RMSNorm(d=ndim, bias=bias)
-
-    def forward(self, x):
-        # return F.layer_norm(x, self.weight.shape, self.weight, self.bias, 1e-5)
-        return self.norm(x)
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end, device=freqs.device, dtype=torch.float32)
+    freqs = torch.outer(t, freqs)
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+    return freqs_cis
 
 
-class CausalSelfAttention(nn.Module):
-
-    def __init__(self, config: GPTConfig, rotary_emb: RotaryEmbedding):
-        super().__init__()
-        self.rotary_emb = rotary_emb
-        assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
-        # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        # regularization
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
-        self.dropout = config.dropout
-        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if not self.flash:
-            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
-            # causal mask to ensure that attention is only applied to the left in the input sequence
-            self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                 .view(1, 1, config.block_size, config.block_size))
-
-    def forward(self, x):
-        B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
-
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
-
-        q = self.rotary_emb.rotate_queries_or_keys(q)
-        k = self.rotary_emb.rotate_queries_or_keys(k)
-
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None,
-                                                                 dropout_p=self.dropout if self.training else 0,
-                                                                 is_causal=True)
-        else:
-            # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-
-        # output projection
-        y = self.resid_dropout(self.c_proj(y))
-        return y
+def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
+    ndim = x.ndim
+    assert 0 <= 1 < ndim
+    assert freqs_cis.shape == (x.shape[1], x.shape[-1])
+    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
+    return freqs_cis.view(*shape)
 
 
-class MLP(nn.Module):
+def apply_rotary_emb(
+        xq: torch.Tensor,
+        xk: torch.Tensor,
+        freqs_cis: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
+    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
+    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+    return xq_out.type_as(xq), xk_out.type_as(xk)
 
-    def __init__(self, config: GPTConfig):
-        super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.act = nn.SiLU()
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-        self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, x):
-        x = self.c_fc(x)
-        x = self.act(x)
-        x = self.c_proj(x)
-        x = self.dropout(x)
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
+    bs, slen, n_kv_heads, head_dim = x.shape
+    if n_rep == 1:
         return x
+    return (
+        x[:, :, :, None, :]
+        .expand(bs, slen, n_kv_heads, n_rep, head_dim)
+        .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
+    )
 
 
-class Block(nn.Module):
+class SwiGLU(nn.Module):
+    def forward(self, x):
+        x, gate = x.chunk(2, dim=-1)
+        return F.silu(gate) * x
 
-    def __init__(self, config: GPTConfig, rotary_emb: RotaryEmbedding):
+
+class Attention(nn.Module):
+    def __init__(self, args: ModelArgs, device: Any = None):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = CausalSelfAttention(config, rotary_emb)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MLP(config)
+        self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
+        self.model_parallel_size = 1
+        self.n_local_heads = args.n_heads // self.model_parallel_size
+        self.n_local_kv_heads = self.n_kv_heads // self.model_parallel_size
+        self.n_rep = self.n_local_heads // self.n_local_kv_heads
+        self.head_dim = args.dim // args.n_heads
+
+        self.dropout = nn.Dropout(args.dropout)
+
+        self.wq = nn.Linear(
+            args.dim,
+            args.n_heads * self.head_dim,
+            bias=args.bias,
+            device=device
+        )
+
+        self.wk = nn.Linear(
+            args.dim,
+            self.n_kv_heads * self.head_dim,
+            bias=args.bias,
+            device=device
+        )
+        self.wv = nn.Linear(
+            args.dim,
+            self.n_kv_heads * self.head_dim,
+            bias=args.bias,
+            device=device
+        )
+        self.wo = nn.Linear(
+            args.n_heads * self.head_dim,
+            args.dim,
+            bias=args.bias,
+            device=device
+        )
+
+        self.cache_k = torch.zeros(
+            (
+                args.max_batch_size,
+                args.max_seq_len,
+                self.n_local_kv_heads,
+                self.head_dim,
+
+            ),
+            device=device
+        )
+
+        self.cache_v = torch.zeros(
+            (
+                args.max_batch_size,
+                args.max_seq_len,
+                self.n_local_kv_heads,
+                self.head_dim,
+            ),
+            device=device
+        )
+
+    def forward(
+            self,
+            x: torch.Tensor,
+            start_pos: int,
+            freqs_cis: torch.Tensor,
+            mask: Optional[torch.Tensor],
+            is_inference_mode: bool = False
+    ):
+        bsz, seqlen, _ = x.shape
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+
+        xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+
+        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+
+        if is_inference_mode:
+
+            self.cache_k = self.cache_k.to(xq)
+            self.cache_v = self.cache_v.to(xq)
+
+            self.cache_k[:bsz, start_pos: start_pos + seqlen] = xk
+            self.cache_v[:bsz, start_pos: start_pos + seqlen] = xv
+
+            keys = self.cache_k[:bsz, : start_pos + seqlen]
+            values = self.cache_v[:bsz, : start_pos + seqlen]
+
+            # repeat k/v heads if n_kv_heads < n_heads
+            keys = repeat_kv(
+                keys, self.n_rep
+            )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
+            values = repeat_kv(
+                values, self.n_rep
+            )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
+
+        else:
+
+            keys = xk
+            values = xv
+
+        xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        keys = keys.transpose(1, 2)  # (bs, n_local_heads, cache_len + seqlen, head_dim)
+        values = values.transpose(
+            1, 2
+        )  # (bs, n_local_heads, cache_len + seqlen, head_dim)
+        scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
+        if mask is not None:
+            scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+        scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+        output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+        output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        output = self.dropout(output)
+        return self.wo(output)
+
+
+class FeedForward(nn.Module):
+    def __init__(
+            self,
+            dim: int,
+            hidden_dim: int,
+            multiple_of: int,
+            ffn_dim_multiplier: Optional[float],
+            device: Any = None,
+            bias: bool = False
+    ):
+        super().__init__()
+        hidden_dim = int(2 * hidden_dim / 3)
+        # custom dim factor multiplier
+        if ffn_dim_multiplier is not None:
+            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
+        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+        self.w1 = nn.Linear(
+            dim, hidden_dim, bias=bias, device=device
+        )
+        self.w2 = nn.Linear(
+            hidden_dim, dim, bias=bias, device=device
+        )
+        self.w3 = nn.Linear(
+            dim, hidden_dim, bias=bias, device=device
+        )
 
     def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
-        return x
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
-class GPT(nn.Module):
-
-    def __init__(self, config: GPTConfig):
+class TransformerBlock(nn.Module):
+    def __init__(self, layer_id: int, args: ModelArgs, device: Any = None):
         super().__init__()
-        assert config.vocab_size is not None
-        assert config.block_size is not None
-        self.config = config
-        print("GPT config", config)
+        self.n_heads = args.n_heads
+        self.dim = args.dim
+        self.head_dim = args.dim // args.n_heads
+        self.attention = Attention(args, device=device)
+        self.feed_forward = FeedForward(
+            dim=args.dim,
+            hidden_dim=4 * args.dim,
+            multiple_of=args.multiple_of,
+            ffn_dim_multiplier=args.ffn_dim_multiplier,
+            device=device,
+            bias=args.bias
+        )
+        self.layer_id = layer_id
+        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps, device=device)
+        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps, device=device)
 
-        self.rotary_emb = RotaryEmbedding(dim=config.block_size, device=config.device)
+    def forward(
+            self,
+            x: torch.Tensor,
+            start_pos: int,
+            freqs_cis: torch.Tensor,
+            mask: Optional[torch.Tensor],
+            is_inference_mode: bool = False
+    ):
+        h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask, is_inference_mode)
+        out = h + self.feed_forward(self.ffn_norm(h))
+        return out
 
-        self.transformer = nn.ModuleDict(dict(
-            wte=nn.Embedding(config.vocab_size, config.n_embd, config.padding_idx),
-            wpe=nn.Embedding(config.block_size, config.n_embd),
-            drop=nn.Dropout(config.dropout),
-            h=nn.ModuleList([Block(config, self.rotary_emb) for _ in range(config.n_layer)]),
-            ln_f=LayerNorm(config.n_embd, bias=config.bias),
-        ))
-        self.lm_head = nn.Linear(config.n_embd * config.block_size, config.vocab_size, bias=False)
 
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        # self.transformer.wte.weight = self.lm_head.weight  # https://paperswithcode.com/method/weight-tying
+class Transformer(nn.Module):
+    def __init__(self, args: ModelArgs, device: Any = None):
+        super().__init__()
+        self.args = args
+        self.vocab_size = args.vocab_size
+        self.n_layers = args.n_layers
 
-        # init all weights
-        self.apply(self._init_weights)
-        # apply special scaled init to the residual projections, per GPT-2 paper
-        for pn, p in self.named_parameters():
-            if pn.endswith('c_proj.weight'):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
+        self.tok_embeddings = nn.Embedding(
+            args.vocab_size,
+            args.dim,
+            padding_idx=args.pad_id,
+            device=device,
+        )
 
-        # report number of parameters
-        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+        self.layers = torch.nn.ModuleList(
+            [TransformerBlock(layer_id, args, device=device) for layer_id in range(args.n_layers)]
+        ).to(device=device)
 
-    def get_num_params(self, non_embedding=True):
-        """
-        Return the number of parameters in the model.
-        For non-embedding count (default), the position embeddings get subtracted.
-        The token embeddings would too, except due to the parameter sharing these
-        params are actually used as weights in the final layer, so we include them.
-        """
-        n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.transformer.wpe.weight.numel()
-        return n_params
+        self.norm = RMSNorm(args.dim, eps=args.norm_eps, device=device)
 
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        self.projection_dim = args.num_classes
 
-    def forward(self, idx, targets=None):
-        device = idx.device
-        b, t = idx.size()
-        # assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        # pos = torch.arange(0, t, dtype=torch.long, device=device)  # shape (t)
+        self.output0 = nn.Linear(
+            args.dim, self.projection_dim, bias=False, device=device
+        )
 
-        # forward the GPT model itself
-        # tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
-        # pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (t, n_embd)
-        # x = self.transformer.drop(tok_emb + pos_emb)
-        tok_emb = self.transformer.wte(idx)
-        x = self.transformer.drop(tok_emb)
-        for block in self.transformer.h:
-            x = block(x)
-        x = self.transformer.ln_f(x)
+        self.output1 = nn.Linear(
+            args.dim, self.projection_dim, bias=False, device=device
+        )
+
+        self.output2 = nn.Linear(
+            self.projection_dim * self.projection_dim, self.projection_dim, bias=False, device=device
+        )
+
+        self.freqs_cis = precompute_freqs_cis(
+            args.dim // args.n_heads,
+            args.max_seq_len * 2,
+            args.rope_theta,
+        )
+
+    def forward(self, tokens: torch.Tensor, targets: torch.Tensor = None, is_inference_mode: bool = False):
+        B, S = tokens.shape
+        h = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[0: 0 + S]
+        for layer in self.layers:
+            h = layer.forward(h, 0, freqs_cis, mask=None, is_inference_mode=is_inference_mode)
+        h = self.norm(h)
+        output = self.output0(h)
+        output = output.transpose(2, 1)
+        output = self.output1(output)
+        output = output.reshape(B, self.projection_dim * self.projection_dim)
+        output = self.output2(output)
         if targets is not None:
-            # if we are given some desired targets also calculate the loss
-            x = x.reshape(b, self.config.block_size * self.config.n_embd)
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(b, logits.size(-1)), targets.view(-1), ignore_index=-1)
-        else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(x[:, [-1], :])  # note: using list [-1] to preserve the time dim
-            loss = None
-
-        return logits, loss
-
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
-        # start with all of the candidate parameters
-        param_dict = {pn: p for pn, p in self.named_parameters()}
-        # filter out those that do not require grad
-        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-        optim_groups = [
-            {'params': decay_params, 'weight_decay': weight_decay},
-            {'params': nodecay_params, 'weight_decay': 0.0}
-        ]
-        num_decay_params = sum(p.numel() for p in decay_params)
-        num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
-        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
-        # Create AdamW optimizer and use the fused version if it is available
-        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device_type == 'cuda'
-        extra_args = dict(fused=True) if use_fused else dict()
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
-        print(f"using fused AdamW: {use_fused}")
-
-        return optimizer
-
-    def estimate_mfu(self, fwdbwd_per_iter, dt):
-        """ estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS """
-        # first estimate the number of flops we do per iteration.
-        # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
-        N = self.get_num_params()
-        cfg = self.config
-        L, H, Q, T = cfg.n_layer, cfg.n_head, cfg.n_embd // cfg.n_head, cfg.block_size
-        flops_per_token = 6 * N + 12 * L * H * Q * T
-        flops_per_fwdbwd = flops_per_token * T
-        flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
-        # express our flops throughput as ratio of A100 bfloat16 peak flops
-        flops_achieved = flops_per_iter * (1.0 / dt)  # per second
-        flops_promised = 312e12  # A100 GPU bfloat16 peak flops is 312 TFLOPS
-        mfu = flops_achieved / flops_promised
-        return mfu
-
-    @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
-        """
-        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
-        the sequence max_new_tokens times, feeding the predictions back into the model each time.
-        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
-        """
-        for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at block_size
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            # forward the model to get the logits for the index in the sequence
-            logits, _ = self.forward(idx_cond)
-            # pluck the logits at the final step and scale by desired temperature
-            logits = logits[:, -1, :] / temperature
-            # optionally crop the logits to only the top k options
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
-            # apply softmax to convert logits to (normalized) probabilities
-            probs = F.softmax(logits, dim=-1)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1)
-            # append sampled index to the running sequence and continue
-            idx = torch.cat((idx, idx_next), dim=1)
-
-        return idx
+            loss = F.cross_entropy(output, targets)
+            return output, loss
+        return output, None

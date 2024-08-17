@@ -1,6 +1,7 @@
 import json
 import random
 import re
+import unicodedata
 
 import jdatetime
 import jsonlines
@@ -204,7 +205,6 @@ remove_items = [
     "⁧",
     "‌",
     "سبدگردان ویستا",
-    "₂",
     "•",
     "™",
     "↔",
@@ -216,10 +216,54 @@ remove_items = [
     "⏳",
     "⏸",
     "⏹",
+    "`",
+    "©",
+    "«",
+    "»",
+    "¬",
+    "±",
+    "×",
+    "÷",
+    "ø",
+    "،",
+    "؛",
+    "؟",
+    "ء",
+    "{",
+    "}",
+    "|",
+    "~",
+    "‘",
+    "’",
+    "“",
+    "”",
+    "•",
+    "…",
+    "\n",
+    "'",
+    "\\",
+    "­",
+    "̇",
+    " ",
+    " ",
+    "⁠",
+    "⁦",
 ]
 
 replace_items = {
-    "  ": " ",
+    "درصدی": "%",
+    "درصد ی": "%",
+    "درصد": "%",
+    "دلاری": "$",
+    "دلار": "$",
+    "¢": "$",
+    "یورویی": "€",
+    "یورو": "€",
+    "%": "%",
+    "٪": "%",
+    "℅": "%",
+    "پوندی": "£",
+    "پوند": "£",
     "...": " ",
     "..": " ",
     "میلیاردریال": " میلیارد ریال ",
@@ -251,40 +295,21 @@ replace_items = {
     "oilmarket": "",
     " , ": ",",
     "⁉": "?",
-    "میدهد": "می دهد",
-    "میشدند": "می شدند",
+    "میدهد": "می‌دهد",
+    "میشدند": "می‌شدند",
     "سهام+حق تقدم": "سهام + حق تقدم",
     "داراییها": "دارایی ها",
-    "ة": "ه",
-    "راهکارهای": "راهکار های",
-    "٠": ".",
     "میکنید": "می کنید",
     "میشوند": "می شوند",
     "بازارهای": "بازار های",
     "سود مجمع داشته است": "سود محقق کرده است",
     "سود مجمع محقق کرده است": "سود محقق کرده است",
-    "ؤ": "و",
-    "اً": "ا",
-    "أ": "ا",
-    "صورتهای مالی": "صورت های مالی",
+    "صورتهای مالی": "صورت‌های مالی",
     "ال ان جی": "lng",
     "lng lng": "lng",
-    "درصدی": "%",
-    "درصد ی": "%",
-    "درصد": "%",
-    "دلاری": "$",
-    "دلار": "$",
-    "یورویی": "€",
-    "یورو": "€",
-    "%": "%",
-    "٪": "%",
-    "℅": "%",
-    "میشود": "می شود",
-    "می شود": "می شود",
-    "روزهای": "روز های",
-    "نمادها": "نماد ها",
-    "/": ".",
+    "میشود": "می‌شود",
     ",": "",
+    "٬": "",
     "میایون": "میلیون",
 }
 
@@ -311,11 +336,11 @@ skip_these_topics = ["کارگاه آموزشی",
                      "بازی تلگرام",
                      "صندوق های رای",
                      "صندوق رای",
-                     "رای گیری",
-                     "برگزار می گردد",
+                     "رای‌گیری",
+                     "برگزار می‌گردد",
                      "برگزار میگردد",
                      "بیشترین ورود نقدینگی حقیقی و حقوقی در کدام صنایع بوده است",
-                     "آماده انجام معامله می باشند",
+                     "آماده انجام معامله می‌باشند",
                      "سمینار بررسی گزارشات",
                      "سمینار بررسی صورت های مالی",
                      "سمینار رایگان بررسی گزارشات",
@@ -324,7 +349,7 @@ skip_these_topics = ["کارگاه آموزشی",
                      "سمینار",
                      "مجمع عمومی عادی سالیانه",
                      "جلسه مجمع عمومی",
-                     "تعلیق می گردد"
+                     "تعلیق می‌گردد"
                      ]
 
 replace_months = {
@@ -377,19 +402,22 @@ map_to_standard_char = {'ك': 'ک',
                         '٩': '9',
                         "،": ",",
                         "ئ": "ی",
+                        "ٱ": "ا",
+                        "اً": "ا",
+                        "إً": "ا",
+                        "أ": "ا",
+                        "ؤ": "و",
+                        "ة": "ه",
+                        "٠": ".",
+                        "ı": "1",
+                        "₂": "2",
+                        "/": ".",
                         }
 
 
-def clean_text2(_text):
-    text = _text
-    for k, v in map_to_standard_char.items():
-        text = text.replace(k, v)
-
-    if len(text) < 2:
-        return text
-    # 12ماهه  -> 12 ماهه
-    # text = re.sub('(\d+(\.\d+)?)', r' \1 ', text)
-    # text = re.sub(r'(\d[\.\d]*)', r' \1 ', text)
+def to_standard_english(_text):
+    normalized = unicodedata.normalize('NFD', _text)
+    text = u"".join([c for c in normalized if not unicodedata.combining(c)])
     return text
 
 
@@ -434,6 +462,8 @@ def add_padding(_text):
 
 
 def clean_text1(_text):
+    if _text is None or _text == "":
+        return None
     text = _text
     # link
     text = re.sub(r'^https?:\/\/.*[\r\n]*', '', text, flags=re.MULTILINE)
@@ -445,29 +475,38 @@ def clean_text1(_text):
     text = re.sub(r'\d{1,2}:\d{2}', '', text)
     # emoji
     text = emoji_pattern.sub(r' ', text)
-    text = text.replace("  ", " ")
-    text = clean_text2(text)
-    text = text.replace("  ", " ")
+    text = re.sub(r"\s{2,}", " ", text)
+    for k, v in map_to_standard_char.items():
+        text = text.replace(k, v)
     text = " ".join(map(change_minus_position, text.split(" ")))
     text = " ".join(map(add_padding, text.split(" ")))
     for i in remove_items:
         text = text.replace(i, " ")
-    text = text.replace("  ", " ")
+    text = re.sub(r"\s{2,}", " ", text)
     for k, v in replace_items.items():
         text = text.replace(k, v)
-    text = text.replace("  ", " ")
+    text = re.sub(r"\s{2,}", " ", text)
     for topic in skip_these_topics:
         if topic in _text:
             return None
     for k, v in replace_months.items():
         text = text.replace(f"{k}", f" {v} ")
+    text = re.sub(r"\s{2,}", " ", text)
+    text = to_standard_english(text)
     return text
 
 
+import hazm
+
+hazm_nor = hazm.Normalizer()
+
+
 def clean_text0(_text):
-    if _text is None:
+    if _text is None or _text == "":
         return None
     text = _text.strip()
+    text = re.sub(r"\s{2,}", " ", text)
+    text = hazm_nor.normalize(text)
     text = text.replace('|', "\n ")
     text = text.lower()
     arr = text.split('\n')
@@ -477,10 +516,11 @@ def clean_text0(_text):
         return None
     text = " ".join(arr)
     text = clean_text1(text)
+    text = hazm_nor.normalize(text or "")
+    text = clean_text1(text)
     if text == "" or text is None:
         return None
-    # text = text_normalizer.normalize(text)
-    text = text.replace("  ", " ")
+    text = re.sub(r"\s{2,}", " ", text)
     return text
 
 
@@ -576,7 +616,7 @@ def process_news3():
     texts = df['text'].to_list()
     print(len(texts))
     import multiprocessing as mp
-    from tiktoken_trained import new_items
+    from ai.tiktoken_trained import new_items
     with mp.Pool(8) as pool:
         results = pool.map(clean_text0, texts)
         print(len(results))
@@ -614,14 +654,28 @@ def process4():
                 ff.write(text)
 
 
+def process5():
+    with open('./text.txt', 'r', encoding='utf8') as f:
+        texts = list(f.readlines())
+        for i in range(200, 210):
+            print(clean_text0(texts[i]))
+        import multiprocessing as mp
+        with mp.Pool(8) as pool:
+            results = pool.map(clean_text0, texts)
+            results = list(filter(lambda x: x is not None, results))
+            text = "\n".join(results)
+            with open('./text2.txt', 'w', encoding='utf8') as ff:
+                ff.write(text)
+
+
 if __name__ == '__main__':
     # fetch_all_data()
 
     # process_news()
     # process_news2()
-    process_news3()
-
+    # process_news3()
     # process4()
+    process5()
 
     # s = "شرکت تام ایران خودرو سهامی عام در گزارش 12ماهه به سود 1314 میلیارد ریال رسیده است"
     # print(s)

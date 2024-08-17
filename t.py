@@ -1,3 +1,5 @@
+import unicodedata
+
 from sqlalchemy import create_engine, text, URL
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -16,4 +18,8 @@ if __name__ == "__main__":
     # session = scoped_session(sessionmaker(bind=engine))()
     #
     # print(session.execute(text("select count(*) from temp_table")))
+    city = "â توان نیروی"
 
+    normalized = unicodedata.normalize('NFD', city)
+    new_city = u"".join([c for c in normalized if not unicodedata.combining(c)])
+    print(new_city)

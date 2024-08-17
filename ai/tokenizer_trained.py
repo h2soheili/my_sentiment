@@ -1,21 +1,24 @@
 from tokenizers import Tokenizer, Regex
 from tokenizers.models import BPE
 from tokenizers.normalizers import Sequence as NormalizerSequence, Replace, BertNormalizer, Strip
-from tokenizers.pre_tokenizers import Sequence as PretokenizerSequence, Split
+from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import BpeTrainer
 
-corpus_file = "./text.txt"
+corpus_files = ["../data/text2.txt"]
 
 special_tokens = [
     "<|begin_of_text|>",
     "<|end_of_text|>",
     "<|padding_token|>",
 
+    "%", "$", "€", "£",
+
     "تریلیون", "همت", "میلیارد", "میلیون", "هزار", "تومان", "ریال", "نرخ", "گزارش", "روند", "صعودی", "نزولی",
     "خرید", "فروش", "سهامی", "سهام", "سهم", "شرکت", "نماد", "صنعت", "فرابورس", "بورس", "کاهشی", "افزایشی", "کاهش",
     "افزایش", "پایه", "قیمت", "معامله", "معاملات", "سالانه", "ساله", "سال", "ماهانه", "ماهه", "ماه", "صورت مالی",
     "مالی", "تن", "کیلو", "گرم", "لیتر", "متر مکعب", "متر مربع", "متر", "وزن", "حجم", "شمش", "طلا", "سکه", "نفت", "گاز",
     "بهره", "سود", "زیان", "حقوقی", "حقیقی", "هکتار", "مبلغ", "ارز", "عرضه", "تقاضا", "حواله", "پول", "صندوق",
+    "گازوییل", "بنزین",
 
     "شنبه", "یکشنبه", "دوشنبه", "سه شنبه", "چهار شنبه", "پنچشنبه", "جمعه",
 
@@ -101,25 +104,22 @@ tokenizer.normalizer = NormalizerSequence([
     Strip(),
     BertNormalizer(clean_text=True, strip_accents=True, lowercase=True),
     Replace(Regex("\s{2,}"), " "),
-    # Strip(),
-    # Replace(" ", "")
-    # Replace(" ", "<space>")
 ])
 
-tokenizer.pre_tokenizer = PretokenizerSequence([
-    Split("\n", behavior="removed")
-])
+tokenizer.pre_tokenizer = Whitespace()
 
 tokenizer.add_special_tokens(special_tokens)
 
 trainer = BpeTrainer(
     special_tokens=special_tokens,
-    vocab_size=50000,
+    vocab_size=3500,
     min_frequency=20,
+    show_progress=True,
+    max_token_length=20,
 )
 
 print("started...")
-tokenizer.train(files=[corpus_file], trainer=trainer)
+tokenizer.train(files=corpus_files, trainer=trainer)
 tokenizer.save("./example_tokenizer.json")
 print("...end")
 # print(len(tokenizer))

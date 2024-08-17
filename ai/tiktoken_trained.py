@@ -1,5 +1,3 @@
-import os.path
-
 VOCAB_SIZE = 3499
 
 
@@ -228,8 +226,10 @@ def train_tokenizer2(text, save_to):
     file.close()
     print("...saved")
 
-def get_tokenizer():
-    print("... loading from tiktoken_trained.iso")
+
+def get_tokenizer(show_log=True):
+    if show_log:
+        print("... loading from tiktoken_trained.iso")
     import pickle
     import sys
     from typing import (
@@ -251,7 +251,8 @@ def get_tokenizer():
     f = open(p, 'rb')
     mergeable_ranks = pickle.load(f)
     f.close()
-    print("...loaded tiktoken_trained.iso")
+    if show_log:
+        print("...loaded tiktoken_trained.iso")
 
     pat_str = "|".join(
         [
@@ -314,9 +315,10 @@ def get_tokenizer():
                 self.special_tokens["<|end_of_text|>"],
                 self.special_tokens["<|eot_id|>"],
             }
-            print(
-                f"#words: {self.n_words} - BOS ID: {self.bos_id} - EOS ID: {self.eos_id}"
-            )
+            if show_log:
+                print(
+                    f"#words: {self.n_words} - BOS ID: {self.bos_id} - EOS ID: {self.eos_id}"
+                )
 
         def encode(
                 self,

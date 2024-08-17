@@ -1,30 +1,48 @@
 import math
-from dataclasses import dataclass
 from typing import Optional, Tuple, Any
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from transformers import PretrainedConfig, PreTrainedModel
 
 
-@dataclass
-class ModelArgs:
-    dim: int = 4096
-    n_layers: int = 32
-    n_heads: int = 32
-    n_kv_heads: Optional[int] = None
-    vocab_size: int = -1
-    multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
-    ffn_dim_multiplier: Optional[float] = None
-    norm_eps: float = 1e-5
-    rope_theta: float = 500000
+class ModelConfig(PretrainedConfig):
+    model_type = "sentiment_analysis"
 
-    max_batch_size: int = 32
-    max_seq_len: int = 2048
-    pad_id: int = -1
-    dropout: float = 0.0
-    num_classes: int = 5
-    bias: bool = False
+    def __init__(self,
+                 dim: int = 4096,
+                 n_layers: int = 32,
+                 n_heads: int = 32,
+                 n_kv_heads: Optional[int] = None,
+                 vocab_size: int = -1,
+                 multiple_of: int = 256,
+                 ffn_dim_multiplier: Optional[float] = None,
+                 norm_eps: float = 1e-5,
+                 rope_theta: float = 500000,
+                 max_batch_size: int = 32,
+                 max_seq_len: int = 2048,
+                 pad_id: int = -1,
+                 dropout: float = 0.0,
+                 num_classes: int = 5,
+                 bias: bool = False,
+                 **kwargs, ):
+        self.dim = dim
+        self.n_layers = n_layers
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads
+        self.vocab_size = vocab_size
+        self.multiple_of = multiple_of
+        self.ffn_dim_multiplier = ffn_dim_multiplier
+        self.norm_eps = norm_eps
+        self.rope_theta = rope_theta
+        self.max_batch_size = max_batch_size
+        self.max_seq_len = max_seq_len
+        self.pad_id = pad_id
+        self.dropout = dropout
+        self.num_classes = num_classes
+        self.bias = bias
+        super().__init__(**kwargs)
 
 
 class RMSNorm(torch.nn.Module):
@@ -89,7 +107,7 @@ class SwiGLU(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, args: ModelArgs, device: Any = None):
+    def __init__(self, args: ModelConfig, device: Any = None):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
         self.model_parallel_size = 1
@@ -234,7 +252,7 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, layer_id: int, args: ModelArgs, device: Any = None):
+    def __init__(self, layer_id: int, args: ModelConfig, device: Any = None):
         super().__init__()
         self.n_heads = args.n_heads
         self.dim = args.dim
@@ -258,17 +276,17 @@ class TransformerBlock(nn.Module):
             start_pos: int,
             freqs_cis: torch.Tensor,
             mask: Optional[torch.Tensor],
-            is_inference_mode: bool = False
     ):
-        h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask, is_inference_mode)
+        h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
 
-class Transformer(nn.Module):
-    def __init__(self, args: ModelArgs, device: Any = None):
-        super().__init__()
-        self.args = args
+class MyTransformer(PreTrainedModel):
+    config_class: ModelConfig
+
+    def __init__(self, args: ModelConfig, device=torch.device('cpu')):
+        super().__init__(args)
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
 
@@ -276,7 +294,6 @@ class Transformer(nn.Module):
             args.vocab_size,
             args.dim,
             padding_idx=args.pad_id,
-            device=device,
         )
 
         self.layers = torch.nn.ModuleList(
@@ -305,20 +322,20 @@ class Transformer(nn.Module):
             args.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor, targets: torch.Tensor = None, is_inference_mode: bool = False):
-        B, S = tokens.shape
-        h = self.tok_embeddings(tokens)
+    def forward(self, input_ids: torch.Tensor, labels: torch.Tensor = None):
+        B, S = input_ids.shape
+        h = self.tok_embeddings(input_ids)
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[0: 0 + S]
         for layer in self.layers:
-            h = layer.forward(h, 0, freqs_cis, mask=None, is_inference_mode=is_inference_mode)
+            h = layer.forward(h, 0, freqs_cis, mask=None)
         h = self.norm(h)
         output = self.output0(h)
         output = output.transpose(2, 1)
         output = self.output1(output)
         output = output.reshape(B, self.projection_dim * self.projection_dim)
-        output = self.output2(output)
-        if targets is not None:
-            loss = F.cross_entropy(output, targets)
-            return output, loss
-        return output, None
+        logits = self.output2(output)
+        if labels is not None:
+            loss = F.cross_entropy(output, labels)
+            return {"loss": loss, "logits": logits}
+        return {"logits": logits}

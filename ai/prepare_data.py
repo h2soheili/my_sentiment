@@ -1,8 +1,8 @@
 import polars as pl
 import torch
-from torch.utils.data import TensorDataset, DataLoader
+from datasets import Dataset
 
-from tiktoken_trained import get_tokenizer
+from .tiktoken_trained import get_tokenizer
 
 
 def get_datasets(csv_path, batch_len, device, max_seq_len=512):
@@ -36,24 +36,11 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
     for k, t in enumerate(prompt_tokens):
         tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device=device)
 
-    train = DataLoader(TensorDataset(tokens[:till], sentiment_tokens[:till]),
-                       batch_size=batch_len, shuffle=True, drop_last=True)
-    val = DataLoader(TensorDataset(tokens[till:], sentiment_tokens[till:]),
-                     batch_size=batch_len, shuffle=True, drop_last=True)
+    # train = DataLoader(TensorDataset(tokens[:till], sentiment_tokens[:till]),
+    #                    batch_size=batch_len, shuffle=True, drop_last=True)
+    # val = DataLoader(TensorDataset(tokens[till:], sentiment_tokens[till:]),
+    #                  batch_size=batch_len, shuffle=True, drop_last=True)
+
+    train = Dataset.from_dict({"input_ids": tokens[:till].tolist(), "labels": sentiment_tokens[:till].tolist()})
+    val = Dataset.from_dict({"input_ids": tokens[till:].tolist(), "labels": sentiment_tokens[till:].tolist()})
     return train, val
-
-
-def manipulate_data(csv_path):
-    df = pl.read_csv(csv_path)
-    import random
-    arr = [random.randint(0, 4) for _ in range(len(df))]
-    df = df.with_columns(pl.Series("target", arr))
-    print(df.head())
-    df.write_csv(csv_path)
-
-
-if __name__ == '__main__':
-    print(1)
-    # train, val = get_datasets('./bv_news2.csv', 4, 'cpu')
-    manipulate_data('./bv_news2.csv')
-    print(2)

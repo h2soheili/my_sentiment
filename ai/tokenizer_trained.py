@@ -1,18 +1,23 @@
 from tokenizers import Tokenizer, Regex
 from tokenizers.models import BPE
-from tokenizers.normalizers import Sequence as NormalizerSequence, Replace, BertNormalizer, Strip
-from tokenizers.pre_tokenizers import Whitespace
-from tokenizers.trainers import BpeTrainer
+from tokenizers.normalizers import (Sequence as NormalizerSequence,
+                                    Replace, BertNormalizer,
+                                    Strip, NFD)
+from tokenizers.pre_tokenizers import Sequence as PreTokenizerSequence, Split, Digits
 
-corpus_files = ["../data/text2.txt"]
+from tokenizers.trainers import BpeTrainer
+from tokenizers import decoders, processors, pre_tokenizers
+
+corpus_files = ["../data/text3.txt"]
 
 special_tokens = [
     "<|begin_of_text|>",
     "<|end_of_text|>",
     "<|padding_token|>",
+    "<space>",
+]
 
-    "%", "$", "€", "£",
-
+custom_tokens = [
     "تریلیون", "همت", "میلیارد", "میلیون", "هزار", "تومان", "ریال", "نرخ", "گزارش", "روند", "صعودی", "نزولی",
     "خرید", "فروش", "سهامی", "سهام", "سهم", "شرکت", "نماد", "صنعت", "فرابورس", "بورس", "کاهشی", "افزایشی", "کاهش",
     "افزایش", "پایه", "قیمت", "معامله", "معاملات", "سالانه", "ساله", "سال", "ماهانه", "ماهه", "ماه", "صورت مالی",
@@ -95,18 +100,40 @@ special_tokens = [
     'وپسا', 'بتک', 'شستان', 'شساخت', 'خفناور', 'سلار', 'فسدید', 'پشاهن', 'کقزوی', 'اتکاسا', 'غبهار',
     'وآرین', 'ثنام', 'شپترو', 'ثاصفا', 'شسم', 'پلوله', 'کورز', 'گشان', 'نشار', 'تفیرو', 'رفاه', 'تابا',
     'فوکا', 'خپارس', 'بتهران', 'فنرژی', 'وفردا', 'پرداخت', 'تاصیکو', 'خموتور', 'تکشا',
-
 ]
 
+# special_tokens += [f"{token}<space>" for token in custom_tokens]
+
+# print(special_tokens)
 tokenizer = Tokenizer(BPE())
 
 tokenizer.normalizer = NormalizerSequence([
     Strip(),
+    NFD(),
     BertNormalizer(clean_text=True, strip_accents=True, lowercase=True),
-    Replace(Regex("\s{2,}"), " "),
+    Replace(Regex("\s{2,}"), "<space>"),
+    Replace(" ", "<space>")
 ])
 
-tokenizer.pre_tokenizer = Whitespace()
+pat_str = "|".join(
+    [
+        r"""[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?""",
+        r"""[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?""",
+        r"""\p{N}{1,3}""",
+        r""" ?[^\s\p{L}\p{N}]+[\r\n/]*""",
+        r"""\s*[\r\n]+""",
+        r"""\s+(?!\S)""",
+        r"""\s+""",
+    ]
+)
+
+# tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(), pre_tokenizers.BertPreTokenizer()])
+# tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(), pre_tokenizers.Whitespace()])
+pat_str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
+tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(individual_digits=True), Split(pat_str, "merged_with_previous")])
+# tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(individual_digits=True), Split(pat_str, "merged_with_previous")])
+
+tokenizer.decoder = decoders.BPEDecoder("<space>")
 
 tokenizer.add_special_tokens(special_tokens)
 

@@ -668,6 +668,19 @@ def process5():
                 ff.write(text)
 
 
+def process6():
+    with open('./text2.txt', 'r', encoding='utf8') as f:
+        texts = list(f.readlines())
+        for i in range(200, 210):
+            print(clean_text0(texts[i]))
+        import multiprocessing as mp
+        with mp.Pool(8) as pool:
+            results = pool.map(clean_text0, texts)
+            results = list(filter(lambda x: x is not None, results))
+            text = "\n".join(results)
+            with open('./text3.txt', 'w', encoding='utf8') as ff:
+                ff.write(text)
+
 if __name__ == '__main__':
     # fetch_all_data()
 
@@ -675,7 +688,8 @@ if __name__ == '__main__':
     # process_news2()
     # process_news3()
     # process4()
-    process5()
+    # process5()
+    process6()
 
     # s = "شرکت تام ایران خودرو سهامی عام در گزارش 12ماهه به سود 1314 میلیارد ریال رسیده است"
     # print(s)

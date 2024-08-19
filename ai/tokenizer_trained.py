@@ -8,7 +8,7 @@ from tokenizers.pre_tokenizers import Sequence as PreTokenizerSequence, Split, D
 from tokenizers.trainers import BpeTrainer
 from tokenizers import decoders, processors, pre_tokenizers
 
-corpus_files = ["../data/text3.txt"]
+corpus_files = ["../data/text.txt"]
 
 special_tokens = [
     "<|begin_of_text|>",
@@ -115,23 +115,24 @@ tokenizer.normalizer = NormalizerSequence([
     Replace(" ", "<space>")
 ])
 
-pat_str = "|".join(
-    [
-        r"""[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?""",
-        r"""[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?""",
-        r"""\p{N}{1,3}""",
-        r""" ?[^\s\p{L}\p{N}]+[\r\n/]*""",
-        r"""\s*[\r\n]+""",
-        r"""\s+(?!\S)""",
-        r"""\s+""",
-    ]
-)
+# pat_str = "|".join(
+#     [
+#         r"""[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?""",
+#         r"""[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?""",
+#         r"""\p{N}{1,3}""",
+#         r""" ?[^\s\p{L}\p{N}]+[\r\n/]*""",
+#         r"""\s*[\r\n]+""",
+#         r"""\s+(?!\S)""",
+#         r"""\s+""",
+#     ]
+# )
 
 # tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(), pre_tokenizers.BertPreTokenizer()])
 # tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(), pre_tokenizers.Whitespace()])
+# tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(individual_digits=True), Split(pat_str, "merged_with_previous")])
+
 pat_str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
 tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(individual_digits=True), Split(pat_str, "merged_with_previous")])
-# tokenizer.pre_tokenizer = PreTokenizerSequence([Digits(individual_digits=True), Split(pat_str, "merged_with_previous")])
 
 tokenizer.decoder = decoders.BPEDecoder("<space>")
 
@@ -147,6 +148,6 @@ trainer = BpeTrainer(
 
 print("started...")
 tokenizer.train(files=corpus_files, trainer=trainer)
-tokenizer.save("./example_tokenizer.json")
+tokenizer.save("./tokenizer_trained.json")
 print("...end")
 # print(len(tokenizer))

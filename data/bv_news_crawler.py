@@ -669,7 +669,7 @@ def process5():
 
 
 def process6():
-    with open('./text2.txt', 'r', encoding='utf8') as f:
+    with open('./text.txt', 'r', encoding='utf8') as f:
         texts = list(f.readlines())
         for i in range(200, 210):
             print(clean_text0(texts[i]))
@@ -678,7 +678,7 @@ def process6():
             results = pool.map(clean_text0, texts)
             results = list(filter(lambda x: x is not None, results))
             text = "\n".join(results)
-            with open('./text3.txt', 'w', encoding='utf8') as ff:
+            with open('./text.txt', 'w', encoding='utf8') as ff:
                 ff.write(text)
 
 if __name__ == '__main__':

@@ -72,7 +72,7 @@ def get_result_from_jabirproject(_text):
 def fn(row):
     _id = row["id"]
     try:
-        text = row["content"]
+        text = row["text"]
         if text is None or text == "":
             print("skip ", _id)
             return None
@@ -81,6 +81,82 @@ def fn(row):
             print("skip ", _id)
             return None
         row['jabirproject'] = get_result_from_jabirproject(text)
+        return row
+    except Exception as e:
+        print("error ", e, row)
+        return None
+
+
+def get_result_from_gpt_mofid(_text):
+    """""
+    ***********************************
+    update Authorization an Cookie
+
+    """
+    text = "برای سهامدار بازار بورس این خبر به کدام حالت از حالت های { مثبت  خنثی منفی } اشاره دارد ؟"
+    # text += "\n فقط حالت را بنویس و توضیح ننویس \n"
+    text += "\n فقط حالت رو بنویس \n"
+    text += _text
+    url = "https://gpt.emofid.com/api/chat/completions"
+    headers = {
+        'Accept': '*/*',
+        'Content-Type': 'en-US,en;q=0.9,fa;q=0.8',
+        'Authorization': 'Bearer ',
+        'Connection': 'keep-alive',
+        'Content-Type': 'application/json',
+        'Cookie': '',
+        'Origin': 'https://gpt.emofid.com',
+        'Referer': 'https://gpt.emofid.com/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        'sec-ch-ua': '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"'
+    }
+
+    data = {
+        "model": "gpt-4o",
+        "stream": False,
+        "messages": [
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "chat_id": "2f84d6c1-7160-481f-ab0c-f720dd514e33"
+    }
+
+    result = None
+
+    for i in range(100):
+        res = None
+        try:
+            res = requests.post(url, headers=headers, data=json.dumps(data))
+            if res.ok:
+                res = res.json()
+                result = res.get("choices", [])[0].get("message", dict()).get("content")
+                break
+        except Exception as e:
+            print(" error for ", e, res, _text)
+            time.sleep(0.2)
+
+    return result
+
+
+def fn2(row):
+    _id = row["id"]
+    try:
+        text = row["text"]
+        if text is None or text == "":
+            print("skip ", _id)
+            return None
+        text = clean_text0(text)
+        if text is None or text == "":
+            print("skip ", _id)
+            return None
+        row['gpt_mofid'] = get_result_from_gpt_mofid(text)
         return row
     except Exception as e:
         print("error ", e, row)
@@ -98,7 +174,7 @@ if __name__ == "__main__":
 
     import polars as pl
 
-    df = pl.read_csv('./bv_news_2.csv')
+    df = pl.read_csv('./bv_news.csv')
     print("df", len(df))
 
     # df = df.drop(["text", "sentiment", "count"], )
@@ -110,7 +186,7 @@ if __name__ == "__main__":
     import multiprocessing as mp
 
     with mp.Pool(10) as pool:
-        results = pool.map(fn, df.rows(named=True)[:100])
+        results = pool.map(fn2, df.rows(named=True)[:100])
         print("results ", len(results))
         results = list(filter(lambda x: x is not None, results))
         print("results ", len(results))

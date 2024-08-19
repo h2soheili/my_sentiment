@@ -14,6 +14,7 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
                                            eos_token='<|end_of_text|>',
                                            pad_token='<|end_of_text|>',
                                            )
+    print("...creating data")
 
     df = pl.read_csv(csv_path)
 
@@ -38,7 +39,7 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
 
     total_len = min(max_seq_len, max_gen_len + max_prompt_len)
 
-    pad_id = my_tokenizer.pad_id
+    pad_id = my_tokenizer.pad_token_id
     tokens = torch.full((bsz, total_len), pad_id, dtype=torch.long, device=device)
     for k, t in enumerate(prompt_tokens):
         tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device=device)
@@ -50,4 +51,5 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
 
     train = Dataset.from_dict({"input_ids": tokens[:till].tolist(), "labels": sentiment_tokens[:till].tolist()})
     val = Dataset.from_dict({"input_ids": tokens[till:].tolist(), "labels": sentiment_tokens[till:].tolist()})
+    print("... data created")
     return train, val

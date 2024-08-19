@@ -671,6 +671,7 @@ def process5():
 def process6():
     with open('./text.txt', 'r', encoding='utf8') as f:
         texts = list(f.readlines())
+        f.close()
         for i in range(200, 210):
             print(clean_text0(texts[i]))
         import multiprocessing as mp

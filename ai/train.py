@@ -24,7 +24,7 @@ my_tokenizer = PreTrainedTokenizerFast(tokenizer_file='./tokenizer_trained.json'
                                        pad_token='<|end_of_text|>',
                                        )
 
-vocab_size = my_tokenizer.vocab_size
+vocab_size = my_tokenizer.vocab_size + len(my_tokenizer.all_special_tokens)
 pad_id = my_tokenizer.pad_token_id
 print("vocab_size", vocab_size)
 print("pad_id", pad_id)
@@ -36,7 +36,7 @@ base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '..'
 data_dir = os.path.join(base_path, "data")
 model_dir = os.path.join(base_path, "out", 'model_01')
 batch_size = 18  # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_dim = 512
+block_dim = 768
 max_seq_len = block_dim
 # model
 n_layer = 32

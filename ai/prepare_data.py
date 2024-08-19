@@ -25,9 +25,17 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
 
     till = int(n * 0.7)
 
+    print("data ", n)
+    print("train ", till)
+    print("val   ", n - till)
+
     max_gen_len = 1
 
-    prompt_tokens = [my_tokenizer.encode(i, max_length=max_seq_len, padding='max_length', truncation=True) for i in data_x]
+    prompt_tokens = [my_tokenizer.encode(i,
+                                         max_length=max_seq_len,
+                                         padding='max_length',
+                                         truncation=True) for i in data_x]
+
     prompt_tokens = [t[:max_seq_len] for t in prompt_tokens]
     sentiment_tokens = torch.tensor([map_label_str_to_class_idx(s) for s in data_y],
                                     dtype=torch.long,

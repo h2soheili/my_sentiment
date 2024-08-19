@@ -36,7 +36,7 @@ base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '..'
 data_dir = os.path.join(base_path, "data")
 model_dir = os.path.join(base_path, "out", 'model_01')
 batch_size = 18  # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_dim = 768
+block_dim = 512
 max_seq_len = block_dim
 # model
 n_layer = 32

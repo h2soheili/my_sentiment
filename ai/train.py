@@ -1,7 +1,5 @@
 import sys
 
-from torcheval.metrics.functional import multiclass_accuracy, multiclass_recall, multiclass_f1_score
-
 is_colab = 'google.colab' in sys.modules
 if is_colab and "/content/my_sentiment" not in sys.path:
     sys.path += ['/content/my_sentiment', 'my_sentiment']
@@ -9,6 +7,7 @@ if is_colab and "/content/my_sentiment" not in sys.path:
 from transformers import Trainer, TrainingArguments, EvalPrediction, PreTrainedTokenizerFast
 from mode_extra import get_model_params
 import os
+from torcheval.metrics.functional import multiclass_accuracy, multiclass_recall, multiclass_f1_score
 from contextlib import nullcontext
 import random
 import numpy as np
@@ -37,12 +36,12 @@ base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '..'
 data_dir = os.path.join(base_path, "data")
 model_dir = os.path.join(base_path, "out", 'model_01')
 batch_size = 18  # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_dim = 128
+block_dim = 512
 max_seq_len = block_dim
 # model
 n_layer = 32
 n_head = 16
-num_classes = 5
+num_classes = 3 # positive negative neutral
 dropout = 0.1  # for pretraining 0 is good, for finetuning try 0.1+
 bias = True  # do we use bias inside LayerNorm and Linear layers?
 # adamw optimizer
@@ -97,9 +96,9 @@ if __name__ == "__main__":
         output_dir=model_dir,
         num_train_epochs=max_iters,
         evaluation_strategy="steps",
-        eval_steps=100,
+        eval_steps=eval_interval,
         logging_strategy="steps",
-        logging_steps=20,
+        logging_steps=eval_interval,
     )
 
     model_conf = ModelConfig(

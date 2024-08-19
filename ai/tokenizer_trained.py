@@ -6,16 +6,9 @@ from tokenizers.normalizers import (Sequence as NormalizerSequence,
 from tokenizers.pre_tokenizers import Sequence as PreTokenizerSequence, Split, Digits
 
 from tokenizers.trainers import BpeTrainer
-from tokenizers import decoders, processors, pre_tokenizers
+from tokenizers import decoders
 
 corpus_files = ["../data/text.txt"]
-
-special_tokens = [
-    "<|begin_of_text|>",
-    "<|end_of_text|>",
-    "<|padding_token|>",
-    "<space>",
-]
 
 custom_tokens = [
     "تریلیون", "همت", "میلیارد", "میلیون", "هزار", "تومان", "ریال", "نرخ", "گزارش", "روند", "صعودی", "نزولی",
@@ -106,6 +99,16 @@ custom_tokens = [
 
 # print(special_tokens)
 tokenizer = Tokenizer(BPE())
+
+special_tokens = [
+    "<|begin_of_text|>",  # 0
+    "<|end_of_text|>",  # 1
+    # "<|padding_token|>",
+    # "<space>",
+]
+
+tokenizer.eos_token = 1
+tokenizer.pad_token = tokenizer.eos_token
 
 tokenizer.normalizer = NormalizerSequence([
     Strip(),

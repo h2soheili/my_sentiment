@@ -2,7 +2,16 @@ from transformers import PreTrainedTokenizerFast
 
 from ai.tiktoken_trained import get_tokenizer
 
-t1 = PreTrainedTokenizerFast(tokenizer_file='./example_tokenizer.json')
+t1 = PreTrainedTokenizerFast(tokenizer_file='./tokenizer_trained.json',
+                             padding_side='right',
+                             truncation_side='right',
+                             bos_token='<|begin_of_text|>',
+                             eos_token='<|end_of_text|>',
+                             pad_token='<|end_of_text|>',
+                             )
+
+print(t1.pad_token_id)
+
 t2 = get_tokenizer(show_log=False)
 import tiktoken
 

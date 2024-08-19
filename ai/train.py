@@ -6,7 +6,7 @@ is_colab = 'google.colab' in sys.modules
 if is_colab and "/content/my_sentiment" not in sys.path:
     sys.path += ['/content/my_sentiment', 'my_sentiment']
 
-from transformers import Trainer, TrainingArguments, EvalPrediction
+from transformers import Trainer, TrainingArguments, EvalPrediction, PreTrainedTokenizerFast
 from mode_extra import get_model_params
 import os
 from contextlib import nullcontext
@@ -15,21 +15,25 @@ import numpy as np
 import torch
 from model import ModelConfig, MyTransformer
 from prepare_data import get_datasets
-from tiktoken_trained import get_tokenizer
 from torch.optim import lr_scheduler
 
-my_tokenizer = get_tokenizer()
+my_tokenizer = PreTrainedTokenizerFast(tokenizer_file='./tokenizer_trained.json',
+                                       padding_side='right',
+                                       truncation_side='right',
+                                       bos_token='<|begin_of_text|>',
+                                       eos_token='<|end_of_text|>',
+                                       pad_token='<|end_of_text|>',
+                                       )
 
-print("extended_encoding.max_token_value", my_tokenizer.n_words)
-vocab_size = my_tokenizer.n_words + 1
-pad_id = my_tokenizer.pad_id
+vocab_size = my_tokenizer.vocab_size
+pad_id = my_tokenizer.pad_token_id
 print("vocab_size", vocab_size)
 print("pad_id", pad_id)
 
 # -----------------------------------------------------------------------------
 # default config values
 # I/O
-base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '.'
+base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '..'
 data_dir = os.path.join(base_path, "data")
 model_dir = os.path.join(base_path, "out", 'model_01')
 batch_size = 18  # if gradient_accumulation_steps > 1, this is the micro-batch size
@@ -57,7 +61,7 @@ min_lr = 6e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinch
 # backend = 'nccl'  # 'nccl', 'gloo', etc.
 # device = 'cuda'  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-device = 'mps'
+# device = 'mps'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'  # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 should_compile_model = False  # use PyTorch 2.0 to compile the model to be faster
 seed = 1024
@@ -85,7 +89,7 @@ if __name__ == "__main__":
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
     ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-    train_data_loader, val_data_loader = get_datasets(os.path.join(data_dir, "bv_news2.csv"),
+    train_data_loader, val_data_loader = get_datasets(os.path.join(data_dir, "bv_news_by_label.csv"),
                                                       batch_len=batch_size,
                                                       device=device, max_seq_len=block_dim)
 

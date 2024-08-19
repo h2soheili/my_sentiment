@@ -1,17 +1,24 @@
 import polars as pl
 import torch
 from datasets import Dataset
+from transformers import PreTrainedTokenizerFast
 
-from .tiktoken_trained import get_tokenizer
+from ai.constants import map_label_str_to_class_idx
 
 
 def get_datasets(csv_path, batch_len, device, max_seq_len=512):
-    my_tokenizer = get_tokenizer()
+    my_tokenizer = PreTrainedTokenizerFast(tokenizer_file='./tokenizer_trained.json',
+                                           padding_side='right',
+                                           truncation_side='right',
+                                           bos_token='<|begin_of_text|>',
+                                           eos_token='<|end_of_text|>',
+                                           pad_token='<|end_of_text|>',
+                                           )
 
     df = pl.read_csv(csv_path)
 
     data_x = df["text"].to_list()
-    data_y = df["target"].to_list()
+    data_y = df["gpt_mofid"].to_list()
 
     n = len(data_x)
 
@@ -19,9 +26,9 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
 
     max_gen_len = 1
 
-    prompt_tokens = [my_tokenizer.encode(i, bos=True, eos=True) for i in data_x]
+    prompt_tokens = [my_tokenizer.encode(i, max_length=max_seq_len, padding='max_length', truncation=True) for i in data_x]
     prompt_tokens = [t[:max_seq_len] for t in prompt_tokens]
-    sentiment_tokens = torch.tensor(data_y,
+    sentiment_tokens = torch.tensor([map_label_str_to_class_idx(s) for s in data_y],
                                     dtype=torch.long,
                                     device=device)
 

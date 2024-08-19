@@ -186,9 +186,9 @@ if __name__ == "__main__":
     import multiprocessing as mp
 
     with mp.Pool(10) as pool:
-        results = pool.map(fn2, df.rows(named=True)[:100])
+        results = pool.map(fn2, df.rows(named=True))
         print("results ", len(results))
         results = list(filter(lambda x: x is not None, results))
         print("results ", len(results))
         df2 = pl.from_records(results)
-        df2.write_csv('./result2.csv')
+        df2.write_csv('./bv_news_by_label.csv')

@@ -1,10 +1,12 @@
-import itertools
+import json
+import multiprocessing as mp
+import os
+from functools import partial
 
 import bs4
-from bs4 import BeautifulSoup
 import requests
-import polars as pl
-import multiprocessing as mp
+from bs4 import BeautifulSoup
+
 
 def extract_row(channel_name, content):
     soup = BeautifulSoup(content, "html.parser")
@@ -25,10 +27,7 @@ def extract_row(channel_name, content):
     return result
 
 
-def get_results(channel_name):
-    result = []
-
-    _id = 99999999999999
+def get_client(channel_name, params):
 
     cookies = {
         'stel_dt': '-210',
@@ -53,42 +52,101 @@ def get_results(channel_name):
         'x-requested-with': 'XMLHttpRequest',
     }
 
+    return requests.post(f"https://t.me/s/{channel_name}", params=params, headers=headers, cookies=cookies)
+
+
+def get_latest_page(channel_name):
+    latest_id = None
+    retry = 0
+    params = {
+        'before': 99999999999999,
+    }
+
     while True:
         try:
-            params = {
-                'before': _id,
-            }
-            res = requests.post(f"https://t.me/s/{channel_name}", params=params, headers=headers, cookies=cookies)
+            res = get_client(channel_name, params)
             if res.ok:
                 text = ((res.text or "")[1:-1] or "").replace("\\n", " ")
                 text = text.replace("\\", "")
                 items = extract_row(channel_name, text)
                 if len(items) > 0:
-                    _id = int(items[0]["id"])
-                    print(_id)
-                    result = result + items
-                    if _id <= 0:
-                        print("_id <= 0  ", channel_name)
-                        break
+                    latest_id = int(items[-1]["id"])
+                break
+        except Exception as e:
+            print(f"get_latest_page retry:{retry} channel_name:{channel_name} e:{e}")
+            retry += 1
+
+    return dict(channel_name=channel_name, latest_id=latest_id)
+
+
+def get_results(q, row):
+    channel_name = row["channel_name"]
+    _id = row["id"]
+    params = {
+        'before': _id,
+    }
+    while True:
+        try:
+            res = get_client(channel_name, params)
+            if res.ok:
+                text = ((res.text or "")[1:-1] or "").replace("\\n", " ")
+                text = text.replace("\\", "")
+                items = extract_row(channel_name, text)
+                if len(items) > 0:
+                    q.put(items)
                 else:
                     print("len(items) > 0  ", channel_name)
                     break
         except Exception as e:
             print("error in ", channel_name, "    ", e)
 
-    print(channel_name, " ", len(result))
 
-    return result
+def file_writer(q):
+    '''listens for messages on the q, writes to file. '''
+    with open("./telegram/news.jsonl", 'a+', encoding='utf8') as f:
+        while True:
+            try:
+                m = q.get()
+                if m == 'kill':
+                    break
+                for i in (m or []):
+                    f.write(json.dumps(i, ensure_ascii=False) + "\n")
+                f.flush()
+            except Exception as e:
+                print(f"file_writer e:{e}")
 
 
 if __name__ == "__main__":
 
     channels = [
+        # 'donyaye_eghtesad_com',
         'tejaratnews',
         'eghtesadonline'
     ]
 
-    with mp.Pool(8) as pool:
-        results = pool.map(get_results, channels)
-        results = list(itertools.chain(*results))
-        pl.from_records(results).write_csv('./telegram_p2.csv')
+    latest_pages = [get_latest_page(c) for c in channels]
+    latest_pages = list(filter(lambda t: t["latest_id"] is not None, latest_pages))
+
+    print("latest_pages ", latest_pages)
+
+    all_reqs = []
+    for row in latest_pages:
+        ids = list([i for i in range(20, row["latest_id"], 20)])
+        all_reqs = all_reqs + [dict(channel_name=row["channel_name"], id=i) for i in ids]
+
+    count = os.cpu_count()
+    manager = mp.Manager()
+    q = manager.Queue()
+
+    print("cpu count", count)
+    print("total crawls ", len(all_reqs))
+
+    with mp.Pool(count) as pool:
+        watcher = pool.apply_async(file_writer, (q,))
+        func = partial(get_results, q)
+        pool.map(func, all_reqs)
+        q.put('kill')
+        pool.close()
+        pool.join()
+        watcher.close()
+        watcher.join()

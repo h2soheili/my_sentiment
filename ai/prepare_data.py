@@ -16,6 +16,8 @@ def get_datasets(csv_path: str,
 
     df = pl.read_csv(csv_path)
 
+    # df = df[:100]
+
     data_x = df["text"].to_list()
     data_y = df["gpt_mofid"].to_list()
 
@@ -27,8 +29,6 @@ def get_datasets(csv_path: str,
     print("train ", till)
     print("val   ", n - till)
 
-    max_gen_len = 1
-
     prompt_tokens = [tokenizer.encode(i,
                                       max_length=max_seq_len,
                                       padding='max_length',
@@ -36,27 +36,24 @@ def get_datasets(csv_path: str,
                      for i in data_x]
 
     prompt_tokens = [t[:max_seq_len] for t in prompt_tokens]
-    sentiment_tokens = torch.tensor([map_label_str_to_class_idx(s) for s in data_y],
-                                    dtype=torch.long,
-                                    device=device)
-
-    bsz = len(prompt_tokens)
+    target = [map_label_str_to_class_idx(s) for s in data_y]
+    # target = torch.tensor(target,
+    #                                 dtype=torch.long,
+    #                                 device=device)
+    # bsz = len(prompt_tokens)
+    # max_gen_len = 1
     # min_prompt_len = min(len(t) for t in prompt_tokens)
-    max_prompt_len = max(len(t) for t in prompt_tokens)
-
-    total_len = min(max_seq_len, max_gen_len + max_prompt_len)
-
-    pad_id = tokenizer.pad_token_id
-    tokens = torch.full((bsz, total_len), pad_id, dtype=torch.long, device=device)
-    for k, t in enumerate(prompt_tokens):
-        tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device=device)
-
-    # train = DataLoader(TensorDataset(tokens[:till], sentiment_tokens[:till]),
+    # max_prompt_len = max(len(t) for t in prompt_tokens)
+    # total_len = min(max_seq_len, max_gen_len + max_prompt_len)
+    # pad_id = tokenizer.pad_token_id
+    # tokens = torch.full((bsz, total_len), pad_id, dtype=torch.long, device=device)
+    # for k, t in enumerate(prompt_tokens):
+    #     tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device=device)
+    # train = DataLoader(TensorDataset(tokens[:till], target[:till]),
     #                    batch_size=batch_len, shuffle=True, drop_last=True)
-    # val = DataLoader(TensorDataset(tokens[till:], sentiment_tokens[till:]),
+    # val = DataLoader(TensorDataset(tokens[till:], target[till:]),
     #                  batch_size=batch_len, shuffle=True, drop_last=True)
-
-    train = Dataset.from_dict({"input_ids": tokens[:till].tolist(), "labels": sentiment_tokens[:till].tolist()})
-    val = Dataset.from_dict({"input_ids": tokens[till:].tolist(), "labels": sentiment_tokens[till:].tolist()})
+    train = Dataset.from_dict({"input_ids": prompt_tokens[:till], "labels": target[:till]})
+    val = Dataset.from_dict({"input_ids": prompt_tokens[till:], "labels": target[till:]})
     print("... data created")
     return train, val

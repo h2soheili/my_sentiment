@@ -35,11 +35,11 @@ print("pad_id", pad_id)
 base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '..'
 data_dir = os.path.join(base_path, "data", "bv_news_by_label.csv")
 model_dir = os.path.join(base_path, "out", "model_01")
-batch_size = 64  # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_dim = 256
+batch_size = 32  # if gradient_accumulation_steps > 1, this is the micro-batch size
+block_dim = 512
 max_seq_len = block_dim
 # model
-n_layer = 12
+n_layer = 16
 n_head = 8
 num_classes = 3  # positive negative neutral
 dropout = 0.1  # for pretraining 0 is good, for finetuning try 0.1+
@@ -102,9 +102,12 @@ if __name__ == "__main__":
         warmup_steps=warmup_iters,
         log_level='debug',
         seed=seed + seed_offset,
-        bf16=device.type == 'cuda',
-        fp16=device.type == 'cuda',
+        # bf16=device.type == 'cuda',
+        # fp16=device.type == 'cuda',
     )
+
+    training_args = training_args.set_training(batch_size=batch_size)
+    training_args = training_args.set_testing(batch_size=batch_size)
 
     model_conf = ModelConfig(
         dim=block_dim,
@@ -168,7 +171,7 @@ if __name__ == "__main__":
         eval_dataset=val_data_loader,
         optimizers=(optimizer, optimizer_scheduler),
         tokenizer=None,
-        compute_metrics=compute_metrics
+        compute_metrics=compute_metrics,
     )
 
     trainer.train()

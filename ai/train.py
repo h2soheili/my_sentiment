@@ -97,10 +97,12 @@ if __name__ == "__main__":
     training_args = TrainingArguments(
         output_dir=model_dir,
         num_train_epochs=max_iters,
-        evaluation_strategy="steps",
+        evaluation_strategy="epoch",
         eval_steps=eval_interval,
-        logging_strategy="steps",
+        logging_strategy="epoch",
         logging_steps=eval_interval,
+        save_steps=eval_interval,
+        save_strategy="epoch",
     )
 
     model_conf = ModelConfig(
@@ -169,3 +171,5 @@ if __name__ == "__main__":
     )
 
     trainer.train()
+
+    trainer.save_model(model_dir)

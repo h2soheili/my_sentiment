@@ -10,7 +10,6 @@ from ai.model import ModelConfig, MyTransformer
 from ai.prepare_data import get_datasets
 import os
 from torcheval.metrics.functional import multiclass_accuracy, multiclass_recall, multiclass_f1_score
-from contextlib import nullcontext
 import random
 import numpy as np
 import torch
@@ -23,7 +22,7 @@ my_tokenizer = PreTrainedTokenizerFast(
     bos_token='<|begin_of_text|>',
     eos_token='<|end_of_text|>',
     pad_token='<|end_of_text|>',
-    )
+)
 
 vocab_size = my_tokenizer.vocab_size + len(my_tokenizer.all_special_tokens)
 pad_id = my_tokenizer.pad_token_id
@@ -34,14 +33,14 @@ print("pad_id", pad_id)
 # default config values
 # I/O
 base_path = '/content/gdrive/MyDrive/mycolab/my_sentiment' if is_colab else '..'
-data_dir = os.path.join(base_path, "data")
-model_dir = os.path.join(base_path, "out", 'model_01')
-batch_size = 18  # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_dim = 512
+data_dir = os.path.join(base_path, "data", "bv_news_by_label.csv")
+model_dir = os.path.join(base_path, "out", "model_01")
+batch_size = 64  # if gradient_accumulation_steps > 1, this is the micro-batch size
+block_dim = 256
 max_seq_len = block_dim
 # model
-n_layer = 32
-n_head = 16
+n_layer = 12
+n_head = 8
 num_classes = 3  # positive negative neutral
 dropout = 0.1  # for pretraining 0 is good, for finetuning try 0.1+
 bias = True  # do we use bias inside LayerNorm and Linear layers?
@@ -55,14 +54,13 @@ grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = True  # whether to decay the learning rate
 warmup_iters = 500  # how many steps to warm up for
-lr_decay_iters = 600000  # should be ~= max_iters per Chinchilla
+lr_decay_iters = max_iters - warmup_iters  # should be ~= max_iters per Chinchilla
 min_lr = 6e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
-# DDP settings
 # backend = 'nccl'  # 'nccl', 'gloo', etc.
 # device = 'cuda'  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = 'mps'
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'  # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
+# dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'  # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 should_compile_model = False  # use PyTorch 2.0 to compile the model to be faster
 seed = 1024
 seed_offset = 0
@@ -82,27 +80,30 @@ if __name__ == "__main__":
     torch.manual_seed(seed + seed_offset)
     torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
     torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
-    device_type = 'cuda' if 'cuda' in device else 'cpu'  # for later use in torch.autocast
+
     device = torch.device(device)
 
-    # note: float16 data type will automatically use a GradScaler
-    ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-    ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
-
-    train_data_loader, val_data_loader = get_datasets(os.path.join(data_dir, "bv_news_by_label.csv"),
+    train_data_loader, val_data_loader = get_datasets(data_dir,
                                                       tokenizer=my_tokenizer,
                                                       batch_len=batch_size,
-                                                      device=device, max_seq_len=block_dim)
+                                                      device=device,
+                                                      max_seq_len=block_dim)
 
     training_args = TrainingArguments(
         output_dir=model_dir,
         num_train_epochs=max_iters,
-        evaluation_strategy="epoch",
+        evaluation_strategy="steps",
         eval_steps=eval_interval,
-        logging_strategy="epoch",
+        logging_strategy="steps",
         logging_steps=eval_interval,
         save_steps=eval_interval,
-        save_strategy="epoch",
+        save_strategy="steps",
+        weight_decay=weight_decay,
+        warmup_steps=warmup_iters,
+        log_level='debug',
+        seed=seed + seed_offset,
+        bf16=device.type == 'cuda',
+        fp16=device.type == 'cuda',
     )
 
     model_conf = ModelConfig(

@@ -66,6 +66,7 @@ seed = 1024
 seed_offset = 0
 eval_interval = 20
 log_interval = 20
+save_interval = 100
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
@@ -96,7 +97,7 @@ if __name__ == "__main__":
         eval_steps=eval_interval,
         logging_strategy="steps",
         logging_steps=eval_interval,
-        save_steps=eval_interval,
+        save_steps=save_interval,
         save_strategy="steps",
         weight_decay=weight_decay,
         warmup_steps=warmup_iters,

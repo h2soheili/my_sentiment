@@ -16,7 +16,7 @@ def get_datasets(csv_path: str,
 
     df = pl.read_csv(csv_path)
 
-    df = df[:100]
+    # df = df[:100]
 
     data_x = df["text"].to_list()
     data_y = df["gpt_mofid"].to_list()

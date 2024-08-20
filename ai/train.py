@@ -5,24 +5,25 @@ if is_colab and "/content/my_sentiment" not in sys.path:
     sys.path += ['/content/my_sentiment', 'my_sentiment']
 
 from transformers import Trainer, TrainingArguments, EvalPrediction, PreTrainedTokenizerFast
-from mode_extra import get_model_params
+from ai.mode_extra import get_model_params
+from ai.model import ModelConfig, MyTransformer
+from ai.prepare_data import get_datasets
 import os
 from torcheval.metrics.functional import multiclass_accuracy, multiclass_recall, multiclass_f1_score
 from contextlib import nullcontext
 import random
 import numpy as np
 import torch
-from model import ModelConfig, MyTransformer
-from prepare_data import get_datasets
 from torch.optim import lr_scheduler
 
-my_tokenizer = PreTrainedTokenizerFast(tokenizer_file='./tokenizer_trained.json',
-                                       padding_side='right',
-                                       truncation_side='right',
-                                       bos_token='<|begin_of_text|>',
-                                       eos_token='<|end_of_text|>',
-                                       pad_token='<|end_of_text|>',
-                                       )
+my_tokenizer = PreTrainedTokenizerFast(
+    tokenizer_file=os.path.join("/content/my_sentiment/ai" if is_colab else ".", "tokenizer_trained.json"),
+    padding_side='right',
+    truncation_side='right',
+    bos_token='<|begin_of_text|>',
+    eos_token='<|end_of_text|>',
+    pad_token='<|end_of_text|>',
+    )
 
 vocab_size = my_tokenizer.vocab_size + len(my_tokenizer.all_special_tokens)
 pad_id = my_tokenizer.pad_token_id
@@ -41,7 +42,7 @@ max_seq_len = block_dim
 # model
 n_layer = 32
 n_head = 16
-num_classes = 3 # positive negative neutral
+num_classes = 3  # positive negative neutral
 dropout = 0.1  # for pretraining 0 is good, for finetuning try 0.1+
 bias = True  # do we use bias inside LayerNorm and Linear layers?
 # adamw optimizer
@@ -89,6 +90,7 @@ if __name__ == "__main__":
     ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
     train_data_loader, val_data_loader = get_datasets(os.path.join(data_dir, "bv_news_by_label.csv"),
+                                                      tokenizer=my_tokenizer,
                                                       batch_len=batch_size,
                                                       device=device, max_seq_len=block_dim)
 

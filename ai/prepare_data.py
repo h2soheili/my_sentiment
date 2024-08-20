@@ -5,15 +5,13 @@ from transformers import PreTrainedTokenizerFast
 
 from ai.constants import map_label_str_to_class_idx
 
+from typing import Any
 
-def get_datasets(csv_path, batch_len, device, max_seq_len=512):
-    my_tokenizer = PreTrainedTokenizerFast(tokenizer_file='./tokenizer_trained.json',
-                                           padding_side='right',
-                                           truncation_side='right',
-                                           bos_token='<|begin_of_text|>',
-                                           eos_token='<|end_of_text|>',
-                                           pad_token='<|end_of_text|>',
-                                           )
+
+def get_datasets(csv_path: str,
+                 batch_len: int,
+                 tokenizer: PreTrainedTokenizerFast,
+                 device: Any, max_seq_len: int = 512):
     print("...creating data")
 
     df = pl.read_csv(csv_path)
@@ -31,10 +29,11 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
 
     max_gen_len = 1
 
-    prompt_tokens = [my_tokenizer.encode(i,
-                                         max_length=max_seq_len,
-                                         padding='max_length',
-                                         truncation=True) for i in data_x]
+    prompt_tokens = [tokenizer.encode(i,
+                                      max_length=max_seq_len,
+                                      padding='max_length',
+                                      truncation=True)
+                     for i in data_x]
 
     prompt_tokens = [t[:max_seq_len] for t in prompt_tokens]
     sentiment_tokens = torch.tensor([map_label_str_to_class_idx(s) for s in data_y],
@@ -47,7 +46,7 @@ def get_datasets(csv_path, batch_len, device, max_seq_len=512):
 
     total_len = min(max_seq_len, max_gen_len + max_prompt_len)
 
-    pad_id = my_tokenizer.pad_token_id
+    pad_id = tokenizer.pad_token_id
     tokens = torch.full((bsz, total_len), pad_id, dtype=torch.long, device=device)
     for k, t in enumerate(prompt_tokens):
         tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device=device)

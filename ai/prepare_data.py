@@ -16,7 +16,7 @@ def get_datasets(csv_path: str,
 
     df = pl.read_csv(csv_path)
 
-    # df = df[:100]
+    df = df[:100]
 
     data_x = df["text"].to_list()
     data_y = df["gpt_mofid"].to_list()
@@ -35,7 +35,7 @@ def get_datasets(csv_path: str,
                                       truncation=True)
                      for i in data_x]
 
-    prompt_tokens = [t[:max_seq_len] for t in prompt_tokens]
+    # prompt_tokens = [t[:max_seq_len] for t in prompt_tokens]
     target = [map_label_str_to_class_idx(s) for s in data_y]
     # target = torch.tensor(target,
     #                                 dtype=torch.long,

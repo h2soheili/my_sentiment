@@ -16,23 +16,23 @@ from data.bv_news_crawler import clean_text0
 
 
 @dataclasses.dataclass
-class ChannelMeta:
-    latest_id: int | None
-    channel_name: str
-
+class BaseDataClass:
     def dict(self):
         return {k: str(v) for k, v in dataclasses.asdict(self).items()}
 
 
 @dataclasses.dataclass
-class CrawledItem:
+class ChannelMeta(BaseDataClass):
+    latest_id: int | None
+    channel_name: str
+
+
+@dataclasses.dataclass
+class CrawledItem(BaseDataClass):
     id: int | str
     text: str
     date: str
     channel_name: str
-
-    def dict(self):
-        return {k: str(v) for k, v in dataclasses.asdict(self).items()}
 
 
 def extract_row(channel_name, content) -> List[CrawledItem]:
@@ -137,17 +137,16 @@ def file_writer(q: mp.Queue):
 
 
 def process1():
-
     channels = [
         'donyaye_eghtesad_com',
-        # 'tejaratnews',
-        # 'eghtesadonline'
+        'tejaratnews',
+        'eghtesadonline'
     ]
 
     all_reqs: List[ChannelMeta] = []
 
     for channel_name in channels:
-        ids = list([i for i in range(0, 2000, 20)])
+        ids = list([i for i in range(1, 20000, 20)])
         all_reqs = all_reqs + [ChannelMeta(channel_name=channel_name, latest_id=i) for i in ids]
 
     count = os.cpu_count()

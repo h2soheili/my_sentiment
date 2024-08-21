@@ -1,16 +1,43 @@
+import dataclasses
 import json
 import multiprocessing as mp
 import os
 from functools import partial
+from multiprocessing import Process
+from typing import List
 
 import bs4
+import jsonlines
+import polars as pl
 import requests
 from bs4 import BeautifulSoup
 
+from data.bv_news_crawler import clean_text0
 
-def extract_row(channel_name, content):
+
+@dataclasses.dataclass
+class ChannelMeta:
+    latest_id: int | None
+    channel_name: str
+
+    def dict(self):
+        return {k: str(v) for k, v in dataclasses.asdict(self).items()}
+
+
+@dataclasses.dataclass
+class CrawledItem:
+    id: int | str
+    text: str
+    date: str
+    channel_name: str
+
+    def dict(self):
+        return {k: str(v) for k, v in dataclasses.asdict(self).items()}
+
+
+def extract_row(channel_name, content) -> List[CrawledItem]:
     soup = BeautifulSoup(content, "html.parser")
-    result = []
+    result: List[CrawledItem] = []
     rows = soup.findAll('div', {"class": "tgme_widget_message_wrap"})
     for row in rows:
         if type(row) == bs4.Tag:
@@ -18,20 +45,20 @@ def extract_row(channel_name, content):
                 _id = row.find('div', attrs={'data-post': True})
                 if _id is not None:
                     _id = _id.attrs["data-post"].replace(f"{channel_name}/", "")
-                _time = row.find('time', attrs={'datetime': True}).attrs["datetime"]
-                _content = row.find('div', {"class": "tgme_widget_message_text"})
-                _content = _content.get_text().strip()
-                result.append(dict(id=_id, content=_content, time=_time))
+                _date = row.find('time', attrs={'datetime': True}).attrs["datetime"]
+                _text = row.find('div', {"class": "tgme_widget_message_text"})
+                if type(_text) == bs4.Tag:
+                    _text = _text.get_text().strip()
+                    result.append(CrawledItem(id=_id, text=_text, date=_date, channel_name=channel_name))
             except Exception as e:
-                print(e)
+                print("extract_row error ", e, row)
     return result
 
 
-def get_client(channel_name, params):
-
+def fetch(channel_name, params):
     cookies = {
-        'stel_dt': '-210',
-        'stel_ssid': '1664e831fce0d4d226_16981272495983999534',
+        # 'stel_dt': '-210',
+        # 'stel_ssid': '1664e831fce0d4d226_16981272495983999534',
     }
 
     headers = {
@@ -55,84 +82,73 @@ def get_client(channel_name, params):
     return requests.post(f"https://t.me/s/{channel_name}", params=params, headers=headers, cookies=cookies)
 
 
-def get_latest_page(channel_name):
-    latest_id = None
-    retry = 0
+def get_results(q: mp.Queue, row: ChannelMeta):
     params = {
-        'before': 99999999999999,
+        'after': row.latest_id,
     }
-
     while True:
         try:
-            res = get_client(channel_name, params)
+
+            res = fetch(row.channel_name, params)
+
             if res.ok:
                 text = ((res.text or "")[1:-1] or "").replace("\\n", " ")
                 text = text.replace("\\", "")
-                items = extract_row(channel_name, text)
+                items = extract_row(row.channel_name, text)
+                print("get_results ... ", row, "   items:", len(items))
                 if len(items) > 0:
-                    latest_id = int(items[-1]["id"])
+                    for item in items:
+                        q.put(item)
+                else:
+                    print("len(items) > 0  ", row.channel_name)
+
                 break
         except Exception as e:
-            print(f"get_latest_page retry:{retry} channel_name:{channel_name} e:{e}")
-            retry += 1
-
-    return dict(channel_name=channel_name, latest_id=latest_id)
+            print(f"error in channel_name:{row.channel_name} latest_id:{row.latest_id} error:{e}")
 
 
-def get_results(q, row):
-    channel_name = row["channel_name"]
-    _id = row["id"]
-    params = {
-        'before': _id,
-    }
-    while True:
-        try:
-            res = get_client(channel_name, params)
-            if res.ok:
-                text = ((res.text or "")[1:-1] or "").replace("\\n", " ")
-                text = text.replace("\\", "")
-                items = extract_row(channel_name, text)
-                if len(items) > 0:
-                    q.put(items)
-                else:
-                    print("len(items) > 0  ", channel_name)
-                    break
-        except Exception as e:
-            print("error in ", channel_name, "    ", e)
-
-
-def file_writer(q):
+def file_writer(q: mp.Queue):
+    cache = dict()
     '''listens for messages on the q, writes to file. '''
     with open("./telegram/news.jsonl", 'a+', encoding='utf8') as f:
         while True:
             try:
-                m = q.get()
-                if m == 'kill':
+                msg = q.get()
+                if msg == None:
+                    print("file_writer msg == None")
+                    continue
+                if msg == 'kill':
+                    print("breaking msg == 'kill'")
                     break
-                for i in (m or []):
-                    f.write(json.dumps(i, ensure_ascii=False) + "\n")
-                f.flush()
+                if type(msg) == CrawledItem:
+                    item: CrawledItem = msg
+                    key = f"{item.channel_name}_{item.id}"
+                    if key not in cache:
+                        f.write(json.dumps(item.dict(), ensure_ascii=False) + "\n")
+                        f.flush()
+                        cache[key] = None
+                    else:
+                        print("file_writer error  row is in cache ", key)
             except Exception as e:
                 print(f"file_writer e:{e}")
+        f.flush()
+        f.close()
+        print("end of file_writer")
 
 
-if __name__ == "__main__":
+def process1():
 
     channels = [
-        # 'donyaye_eghtesad_com',
-        'tejaratnews',
-        'eghtesadonline'
+        'donyaye_eghtesad_com',
+        # 'tejaratnews',
+        # 'eghtesadonline'
     ]
 
-    latest_pages = [get_latest_page(c) for c in channels]
-    latest_pages = list(filter(lambda t: t["latest_id"] is not None, latest_pages))
+    all_reqs: List[ChannelMeta] = []
 
-    print("latest_pages ", latest_pages)
-
-    all_reqs = []
-    for row in latest_pages:
-        ids = list([i for i in range(20, row["latest_id"], 20)])
-        all_reqs = all_reqs + [dict(channel_name=row["channel_name"], id=i) for i in ids]
+    for channel_name in channels:
+        ids = list([i for i in range(0, 2000, 20)])
+        all_reqs = all_reqs + [ChannelMeta(channel_name=channel_name, latest_id=i) for i in ids]
 
     count = os.cpu_count()
     manager = mp.Manager()
@@ -141,12 +157,51 @@ if __name__ == "__main__":
     print("cpu count", count)
     print("total crawls ", len(all_reqs))
 
-    with mp.Pool(count) as pool:
-        watcher = pool.apply_async(file_writer, (q,))
+    with mp.Pool(count - 1) as pool:
+        writer = Process(target=file_writer, args=(q,))
+        writer.start()
         func = partial(get_results, q)
         pool.map(func, all_reqs)
-        q.put('kill')
         pool.close()
         pool.join()
-        watcher.close()
-        watcher.join()
+        q.put('kill')
+        writer.join()
+        print("end...")
+
+
+def telegram_news_cleaner(obj):
+    _text = obj["text"] or ""
+    _text = clean_text0(_text)
+    if _text is None:
+        return None
+    result = dict()
+    result["id"] = obj['id']
+    result["date"] = obj['time']
+    result["text"] = _text
+    result["channel_name"] = None
+    result["label"] = None
+    result["gpt_mofid"] = None
+    return result
+
+
+def process2():
+    with jsonlines.open('./telegram/news.jsonl') as reader:
+        rows = [obj for obj in reader]
+
+        # rows = []
+        # for obj in reader:
+        #     rows.append(obj)
+        #     if len(rows) > 100:
+        #         break
+
+        with mp.Pool(os.cpu_count() - 1) as pool:
+            results = pool.map(telegram_news_cleaner, rows)
+            results = list(filter(lambda x: x is not None, results))
+            # print("results", len(results))
+            df = pl.from_records(results)
+            df.write_csv('./telegram_news_by_label_p1.csv')
+
+
+if __name__ == "__main__":
+    process1()
+    # process2()
